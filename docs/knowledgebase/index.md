@@ -45,11 +45,11 @@ to touch the KB on every edit.
 
 ## Concepts
 
-* _(empty — add concept docs here)_
+* [Tower API surface for a mobile client](concepts/tower-api-surface.md) - what the tower server exposes over HTTP/SSE and how a remote client reaches it.
 
 ## Decisions
 
-* _(empty — add decision docs here)_
+* [SSH tunnel transport, no herdr dependency](decisions/ssh-tunnel-transport.md) - the app talks to the tower REST API over an SSH tunnel; herdr is not required on the host.
 
 ## Patterns
 
@@ -57,7 +57,7 @@ to touch the KB on every edit.
 
 ## Plans
 
-* _(empty — add plan docs here)_
+* [tower-mobile v1: Flutter Android client](plans/mobile-v1.md) - implementation plan for the first Android release.
 
 ## References
 
