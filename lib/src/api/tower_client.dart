@@ -249,6 +249,26 @@ class TowerClient {
   /// `POST /v1/tasks/{id}/cancel` — interrupts the owner.
   Future<void> cancelTask(String id) =>
       _request('POST', '/v1/tasks/$id/cancel');
+
+  /// `GET /v1/events` — the live feed. The server batches events into
+  /// `tower-batch` SSE frames whose data is newline-joined `Event` JSON.
+  /// [exclude] is the server filter syntax, e.g. `type:agent.output`.
+  Stream<TowerEvent> events({String? exclude}) => _conn
+      .sse(
+        '/v1/events',
+        query: {'exclude': ?exclude},
+        headers: {'Authorization': 'Bearer $token'},
+      )
+      .where((f) => f.event == 'tower-batch')
+      // Plain transforms, not async*: cancel reaches the socket at once.
+      .expand(
+        (f) => f.data
+            .split('\n')
+            .where((l) => l.trim().isNotEmpty)
+            .map(
+              (l) => TowerEvent.fromJson(jsonDecode(l) as Map<String, dynamic>),
+            ),
+      );
 }
 
 /// Body of `POST /v1/tasks`.

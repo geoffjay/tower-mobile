@@ -4,6 +4,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../../api/live_feed.dart';
 import '../../connection/registry.dart';
 import '../../connection/session.dart';
 import '../fleet/fleet_screen.dart';
@@ -43,6 +44,7 @@ class _AppShellState extends State<AppShell> {
           appBar: AppBar(
             title: Text(_titleFor(_tab)),
             actions: [
+              if (ready) _FeedIndicator(state.feed!),
               if (state.machine != null)
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
@@ -61,16 +63,16 @@ class _AppShellState extends State<AppShell> {
                 session: session,
               ),
             AppTab.fleet => ready
-                ? FleetScreen(client: state.client!)
+                ? FleetScreen(client: state.client!, feed: state.feed!)
                 : const _NotConnected(),
             AppTab.inbox => ready
-                ? InboxScreen(client: state.client!)
+                ? InboxScreen(client: state.client!, feed: state.feed!)
                 : const _NotConnected(),
             AppTab.jobs => ready
-                ? JobsScreen(client: state.client!)
+                ? JobsScreen(client: state.client!, feed: state.feed!)
                 : const _NotConnected(),
             AppTab.workflows => ready
-                ? WorkflowsScreen(client: state.client!)
+                ? WorkflowsScreen(client: state.client!, feed: state.feed!)
                 : const _NotConnected(),
           },
           bottomNavigationBar: NavigationBar(
@@ -119,12 +121,35 @@ class _AppShellState extends State<AppShell> {
 }
 
 /// Placeholder shown when an action screen is selected without a ready
-/// session. Replaced with real screens at M3.
+/// session.
 class _NotConnected extends StatelessWidget {
   const _NotConnected();
 
   @override
   Widget build(BuildContext context) => const Center(
     child: Text('Connect a machine first (Machines tab).'),
+  );
+}
+
+/// Live-feed health in the app bar: a green dot while the event stream
+/// is open, a tappable red icon after it drops.
+class _FeedIndicator extends StatelessWidget {
+  const _FeedIndicator(this.feed);
+
+  final LiveFeed feed;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<FeedStatus>(
+    valueListenable: feed.status,
+    builder: (context, status, _) => status == FeedStatus.live
+        ? const Tooltip(
+            message: 'Live updates on',
+            child: Icon(Icons.circle, size: 10, color: Colors.green),
+          )
+        : IconButton(
+            tooltip: '${feed.error ?? 'Live updates off'} - tap to reconnect',
+            icon: const Icon(Icons.sync_problem, color: Colors.red),
+            onPressed: feed.reconnect,
+          ),
   );
 }

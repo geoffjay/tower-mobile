@@ -14,6 +14,8 @@ import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import 'sse.dart';
+
 /// Result of one HTTP exchange through the tunnel.
 class HttpResponse {
   const HttpResponse(this.status, this.body);
@@ -131,15 +133,25 @@ class TowerConnection {
     // Local forward: 127.0.0.1:<ephemeral> -> 127.0.0.1:8266 on the host.
     final server = await ServerSocket.bind('127.0.0.1', 0);
     server.listen((client) async {
+      // Writing to a socket the peer already closed completes `done` with
+      // an error; without a handler that is an unhandled async exception.
+      client.done.catchError((Object _) {});
       try {
         final remote = await ssh.forwardLocal('127.0.0.1', 8266);
         client.listen(
           remote.sink.add,
           onError: (Object _) => remote.destroy(),
           onDone: () => remote.sink.close(),
+          cancelOnError: true,
         );
         remote.stream.listen(
-          client.add,
+          (data) {
+            try {
+              client.add(data);
+            } catch (_) {
+              remote.destroy();
+            }
+          },
           onError: (Object _) => client.destroy(),
           onDone: client.destroy,
         );
@@ -236,6 +248,74 @@ class TowerConnection {
     }
   }
 
+  /// Open a `text/event-stream` through the tunnel. The server sends a
+  /// keep-alive comment every 15 s, so 45 s of silence means the tunnel
+  /// is dead and the stream fails with [ConnectionError]. Cancelling the
+  /// subscription closes the socket.
+  Stream<SseFrame> sse(
+    String path, {
+    Map<String, String>? query,
+    Map<String, String>? headers,
+  }) {
+    // A StreamController, not `async*`: cancelling an async* generator
+    // waits until it next yields, which on a quiet feed is a long time.
+    // Here cancel closes the socket at once.
+    Socket? socket;
+    StreamSubscription<SseFrame>? sub;
+    var cancelled = false;
+    late final StreamController<SseFrame> ctl;
+    ctl = StreamController<SseFrame>(
+      onListen: () async {
+        try {
+          final qs = query == null || query.isEmpty
+              ? ''
+              : '?${query.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
+          final s = await Socket.connect('127.0.0.1', _serverPort);
+          if (cancelled) {
+            s.destroy();
+            return;
+          }
+          socket = s;
+          final head = StringBuffer()
+            ..write('GET $path$qs HTTP/1.1\r\n')
+            ..write('Host: 127.0.0.1:8266\r\n')
+            ..write('Accept: text/event-stream\r\n')
+            ..write('Cache-Control: no-cache\r\n');
+          headers?.forEach((k, v) => head.write('$k: $v\r\n'));
+          head.write('\r\n');
+          s.write(head.toString());
+          sub = parseSse(
+            s.cast<List<int>>().timeout(
+              const Duration(seconds: 45),
+              onTimeout: (sink) {
+                sink.addError(ConnectionError('event feed went silent'));
+                sink.close();
+              },
+            ),
+          ).listen(
+            ctl.add,
+            onError: ctl.addError,
+            onDone: () {
+              s.destroy();
+              ctl.close();
+            },
+          );
+        } catch (e) {
+          if (!ctl.isClosed) {
+            ctl.addError(ConnectionError('event feed: $e'));
+            await ctl.close();
+          }
+        }
+      },
+      onCancel: () {
+        cancelled = true;
+        socket?.destroy();
+        sub?.cancel();
+      },
+    );
+    return ctl.stream;
+  }
+
   /// Read the tower token file over SSH (no tunnel needed).
   Future<String> fetchToken() async {
     final conn = ssh;
@@ -263,6 +343,14 @@ class TowerConnection {
       headers: {'Authorization': 'Bearer $token'},
     );
     return res.status == 200;
+  }
+
+  /// Completes when the SSH session ends for any reason (dropped
+  /// network, server close, [close]). Never throws.
+  Future<void> get closed async {
+    try {
+      await ssh?.done;
+    } catch (_) {}
   }
 
   void close() {

@@ -7,6 +7,7 @@ import 'dart:async';
 
 import 'package:dartssh2/dartssh2.dart';
 
+import '../api/live_feed.dart';
 import '../api/tower_client.dart';
 import 'connection.dart';
 import 'registry.dart';
@@ -28,6 +29,7 @@ class SessionState {
     this.client,
     this.error,
     this.needsPassword = false,
+    this.feed,
   });
 
   final SessionPhase phase;
@@ -38,6 +40,9 @@ class SessionState {
   /// Key auth failed and no password was supplied: the UI should ask
   /// for one and reconnect.
   final bool needsPassword;
+
+  /// Live event feed; set only while [phase] is ready.
+  final LiveFeed? feed;
 
   SessionState copyWith({
     SessionPhase? phase,
@@ -51,6 +56,7 @@ class SessionState {
     client: client ?? this.client,
     error: error,
     needsPassword: needsPassword ?? this.needsPassword,
+    feed: feed,
   );
 }
 
@@ -167,7 +173,21 @@ class SessionController extends Stream<SessionState> {
         phase: SessionPhase.ready,
         machine: machine,
         client: client,
+        feed: LiveFeed(client),
       ));
+      // The tunnel can die under us (network change, sshd restart). Say
+      // so, instead of leaving screens to fail one request at a time.
+      unawaited(conn.closed.then((_) {
+        if (!identical(_conn, conn) || _state.phase != SessionPhase.ready) {
+          return;
+        }
+        _state.feed?.dispose();
+        _set(SessionState(
+          phase: SessionPhase.failed,
+          machine: machine,
+          error: 'connection to ${machine.name} lost; tap it to reconnect',
+        ));
+      }));
     } on ConnectionError catch (e) {
       // Key auth refused with no password available: ask for one
       // instead of dead-ending. The UI reconnects with the answer.
@@ -190,12 +210,14 @@ class SessionController extends Stream<SessionState> {
   }
 
   Future<void> disconnect() async {
+    _state.feed?.dispose();
     _conn?.close();
     _conn = null;
     _set(const SessionState());
   }
 
   void dispose() {
+    _state.feed?.dispose();
     _conn?.close();
     _ctl.close();
   }

@@ -5,6 +5,20 @@
 /// `concepts/tower-api-surface.md` for the wire contract.
 library;
 
+import 'dart:convert';
+
+/// `result` is free-form JSON: tower agents store an object (usually with
+/// a `summary` string), older rows a plain string. Show the summary when
+/// there is one, otherwise the JSON text.
+String? _resultText(Object? v) {
+  if (v == null) return null;
+  if (v is String) return v;
+  if (v is Map<String, dynamic> && v['summary'] is String) {
+    return v['summary'] as String;
+  }
+  return jsonEncode(v);
+}
+
 /// `AgentState`: `unknown | launching | idle | working | blocked | done | dead`.
 enum AgentState {
   unknown,
@@ -322,7 +336,7 @@ class Task {
     preRun: json['pre_run'] as String?,
     postRun: json['post_run'] as String?,
     hook: json['hook'] as String?,
-    result: json['result'] as String?,
+    result: _resultText(json['result']),
     createdAt: json['created_at'] as int? ?? 0,
     updatedAt: json['updated_at'] as int? ?? 0,
   );
@@ -394,7 +408,7 @@ class WorkflowRun {
     state: RunState.fromJson(json['state'] as String?),
     input:
         json['input'] as Map<String, dynamic>? ?? const <String, dynamic>{},
-    result: json['result'] as String?,
+    result: _resultText(json['result']),
     error: json['error'] as String?,
     endedAt: json['ended_at'] as int?,
     createdAt: json['created_at'] as int? ?? 0,
@@ -442,7 +456,7 @@ class WorkflowStep {
     taskId: json['task_id'] as String?,
     agentId: json['agent_id'] as String?,
     outcome: json['outcome'] as String?,
-    result: json['result'] as String?,
+    result: _resultText(json['result']),
     error: json['error'] as String?,
     createdAt: json['created_at'] as int? ?? 0,
     startedAt: json['started_at'] as int?,

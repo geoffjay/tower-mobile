@@ -71,6 +71,11 @@ self-discover at runtime, but v1 hard-codes the routes it needs.
 - Events arrive as SSE batches named `tower-batch`; `id:` is the seq; the
   data is newline-joined `Event` JSON payloads.
 - Keep-alive comment every 15 s. Set the client read-timeout above that.
+  The app treats 45 s of silence as a dead tunnel.
+- Verified on tower 0.9.0 over a forwarded port: the response is
+  `200` with `transfer-encoding: chunked` and `content-type:
+  text/event-stream`; a `task.created` event arrived as a `tower-batch`
+  frame. `exclude=type:agent.output` is accepted (no 400).
 - Event kinds of interest: `agent.state`, `agent.output`, `task.created`,
   `task.status`, `task.assigned`, `message.created`, `message.status`,
   `workflow.run.started`, `workflow.run.completed`,
@@ -104,6 +109,9 @@ All ids are ULID strings. Timestamps are ms-epoch integers.
   failed | canceled`. **WorkflowStep**: `id, run_id, node_id, visit,
   state, activated_by[], task_id?, agent_id?, outcome?, result?, error?,
   created_at, started_at?, ended_at?`.
+- **`result` is free-form JSON, not a string.** On tower 0.9.0 a task
+  `result` is an object (usually with a `summary` string plus arbitrary
+  keys). The mobile models keep `summary` when present, else the JSON text.
 - **Event**: `seq, ts, kind, subject_type?, subject_id?, payload`.
 
 ## Error envelope
