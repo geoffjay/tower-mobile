@@ -29,8 +29,9 @@ tower-mobile — can use, and how it reaches the server. Facts come from the
 - There is no TLS and no rate limit. The bearer token is full operator
   control. Treat it as a secret. Rotation: delete the token file and restart
   `tower serve`.
-- `GET /healthz` answers `{ok, version, started_at, db}`. Use it as the
-  connect-then-health probe.
+- `GET /healthz` answers `{ok, version, started_at, db}`. It needs the
+  bearer token like every other route: verified on tower 0.9.0, where an
+  unauthenticated request returns 401. Send the token on the health probe.
 
 ## Endpoints tower-mobile uses
 

@@ -11,6 +11,12 @@ import '../api/tower_client.dart';
 import 'connection.dart';
 import 'registry.dart';
 
+/// Print SSH debug lines to the console; visible under `flutter run`.
+void debugLog(String line) {
+  // ignore: avoid_print
+  print('ssh: $line');
+}
+
 /// Phases of bringing a machine online.
 enum SessionPhase { disconnected, connecting, connected, ready, failed }
 
@@ -21,6 +27,7 @@ class SessionState {
     this.machine,
     this.client,
     this.error,
+    this.needsPassword = false,
   });
 
   final SessionPhase phase;
@@ -28,16 +35,22 @@ class SessionState {
   final TowerClient? client;
   final String? error;
 
+  /// Key auth failed and no password was supplied: the UI should ask
+  /// for one and reconnect.
+  final bool needsPassword;
+
   SessionState copyWith({
     SessionPhase? phase,
     StoredMachine? machine,
     TowerClient? client,
     String? error,
+    bool? needsPassword,
   }) => SessionState(
     phase: phase ?? this.phase,
     machine: machine ?? this.machine,
     client: client ?? this.client,
     error: error,
+    needsPassword: needsPassword ?? this.needsPassword,
   );
 }
 
@@ -78,10 +91,24 @@ class SessionController extends Stream<SessionState> {
     await disconnect();
     _set(SessionState(phase: SessionPhase.connecting, machine: machine));
 
+    var useKey = false;
     try {
       final (publicKey, privateKey) = await _registry.deviceKeyPair();
 
-      final useKey = machine.keyBootstrapped;
+      // A regenerated (pre-fix) key invalidates every machine's
+      // bootstrap flag: the public key on the hosts is the broken one's
+      // sibling that never authenticated, so re-bootstrap everywhere.
+      if (await _registry.deviceKeyWasRegenerated()) {
+        final machines = _registry.machines();
+        final i = machines.indexWhere((m) => m.id == machine.id);
+        if (i >= 0) {
+          machine = machine.copyWith(keyBootstrapped: false);
+          machines[i] = machine;
+          await _registry.saveMachines(machines);
+        }
+      }
+
+      useKey = machine.keyBootstrapped;
       final keyPair = useKey ? SSHKeyPair.fromPem(privateKey).single : null;
 
       final conn = await TowerConnection.connect(
@@ -93,6 +120,7 @@ class SessionController extends Stream<SessionState> {
         publicKey: publicKey,
         onHostKeyFingerprint: (type, fingerprint) =>
             _fingerprint = '$type $fingerprint',
+        onDebug: debugLog,
       );
       _conn = conn;
       _set(_state.copyWith(phase: SessionPhase.connected));
@@ -131,7 +159,7 @@ class SessionController extends Stream<SessionState> {
         await client.agents();
       }
 
-      if (!await conn.health()) {
+      if (!await conn.health(client.token)) {
         throw ConnectionError('tower server did not answer /healthz');
       }
       await _registry.setActiveMachine(machine.id);
@@ -141,10 +169,16 @@ class SessionController extends Stream<SessionState> {
         client: client,
       ));
     } on ConnectionError catch (e) {
+      // Key auth refused with no password available: ask for one
+      // instead of dead-ending. The UI reconnects with the answer.
+      final keyRejected = useKey &&
+          (e.message.contains('auth failed') ||
+              e.message.contains('closed'));
       _set(SessionState(
         phase: SessionPhase.failed,
         machine: machine,
         error: e.message,
+        needsPassword: keyRejected && password == null,
       ));
     } catch (e) {
       _set(SessionState(

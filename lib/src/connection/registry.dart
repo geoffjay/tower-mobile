@@ -85,6 +85,7 @@ class MachineRegistry {
 
   static const _machinesKey = 'machines';
   static const _activeKey = 'active_machine';
+  static const _keyRegenFlag = 'device_key_regenerated';
   static const _pubkeyKey = 'device_public_key';
   static const _privkeyKey = 'device_private_key';
   static const _tokenPrefix = 'tower_token:';
@@ -134,16 +135,49 @@ class MachineRegistry {
 
   /// The device SSH key pair, generated on first use. The private key
   /// stays in secure storage in OpenSSH format.
+  ///
+  /// A pre-fix key stored the bare 32-byte Ed25519 seed; dartssh2 needs
+  /// the 64-byte expanded secret. Detect the short form and regenerate;
+  /// the machine record's `keyBootstrapped` flag is then wrong and the
+  /// caller must re-bootstrap with a password.
   Future<(String public, String private)> deviceKeyPair() async {
     final existingPub = await _secure.read(key: _pubkeyKey);
     final existingPriv = await _secure.read(key: _privkeyKey);
-    if (existingPub != null && existingPriv != null) {
+    if (existingPub != null &&
+        existingPriv != null &&
+        !_isBrokenKey(existingPriv)) {
       return (existingPub, existingPriv);
+    }
+    if (existingPriv != null) {
+      // Broken pre-fix key: regenerate and tell the caller to
+      // re-bootstrap the machines.
+      await _prefs.setBool(_keyRegenFlag, true);
     }
     final pair = await _generateKeyPair();
     await _secure.write(key: _pubkeyKey, value: pair.$1);
     await _secure.write(key: _privkeyKey, value: pair.$2);
     return pair;
+  }
+
+  /// True once after a broken-key regeneration; cleared by the caller
+  /// once every machine's bootstrap flag is reset.
+  Future<bool> deviceKeyWasRegenerated() async {
+    final v = _prefs.getBool(_keyRegenFlag);
+    if (v != true) return false;
+    await _prefs.setBool(_keyRegenFlag, false);
+    return true;
+  }
+
+  /// True when [pem] is the pre-fix form: a parsable OpenSSH key whose
+  /// Ed25519 private blob is not the 64-byte expanded secret.
+  bool _isBrokenKey(String pem) {
+    try {
+      final pairs = SSHKeyPair.fromPem(pem);
+      final key = pairs.single;
+      return key is OpenSSHEd25519KeyPair && key.privateKey.length != 64;
+    } catch (_) {
+      return true;
+    }
   }
 
   Future<void> clearDeviceKey() async {
@@ -154,11 +188,16 @@ class MachineRegistry {
   /// Generate an Ed25519 OpenSSH key pair. dartssh2 has no generate()
   /// helper; the seed comes from pinenacl's `SigningKey.generate()` (the
   /// same crypto stack dartssh2 uses for Ed25519 signing).
+  ///
+  /// OpenSSHEd25519KeyPair's privateKey is the 64-byte expanded secret
+  /// (seed + public key) — pinenacl's `SigningKey.asTypedList` is exactly
+  /// that. Storing the bare 32-byte seed makes dartssh2 abort key auth
+  /// with "The list length (32) is invalid (min: 64, max: 64)".
   Future<(String public, String private)> _generateKeyPair() async {
     final signing = SigningKey.generate();
     final pair = OpenSSHEd25519KeyPair(
       Uint8List.fromList(signing.verifyKey.asTypedList),
-      Uint8List.fromList(signing.seed),
+      Uint8List.fromList(signing.asTypedList),
       'tower-mobile',
     );
     final publicKey =

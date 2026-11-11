@@ -32,10 +32,35 @@ class ConnectionError implements Exception {
 
 /// One connected machine.
 class TowerConnection {
-  TowerConnection._(this.ssh, this._serverPort);
+  TowerConnection._(this.ssh, this._forward);
 
-  final int _serverPort;
-  final SSHClient ssh;
+  /// The local listener that tunnels to the host; closed with the
+  /// connection so it does not outlive the session.
+  final ServerSocket _forward;
+  int get _serverPort => _forward.port;
+  /// Null for the local test constructor; the real one holds the SSH
+  /// session the tunnel runs over.
+  final SSHClient? ssh;
+
+  /// Test-only: bind the forward server directly to a local address,
+  /// no SSH underneath. Used by the e2e harness against a local tower.
+  static Future<TowerConnection> connectLocal({
+    required String forwardTo,
+    required int forwardPort,
+  }) async {
+    final server = await ServerSocket.bind('127.0.0.1', 0);
+    server.listen((client) async {
+      try {
+        final remote = await Socket.connect(forwardTo, forwardPort);
+        client.listen(remote.add, onDone: () => remote.destroy());
+        remote.listen(client.add, onDone: () => client.destroy());
+      } catch (_) {
+        client.destroy();
+      }
+    });
+    return TowerConnection._(null, server);
+  }
+
 
   /// Open a connection. Password auth on first connect (bootstrap appends
   /// the [publicKey] to `authorized_keys`), key auth afterwards.
@@ -48,6 +73,7 @@ class TowerConnection {
     String? publicKey,
     Duration timeout = const Duration(seconds: 15),
     void Function(String type, String fingerprint)? onHostKeyFingerprint,
+    void Function(String line)? onDebug,
   }) async {
     final SSHSocket socket;
     try {
@@ -56,16 +82,29 @@ class TowerConnection {
       throw ConnectionError('cannot reach $host:$port: $e');
     }
 
+    // One credential, two auth methods: many sshd setups (macOS,
+    // PAM-based Linux) accept keyboard-interactive only, others accept
+    // plain password. Hand the password out exactly once across both,
+    // so a rejection fails fast instead of replaying.
+    final handOut = password == null ? null : _once(password);
     final ssh = SSHClient(
       socket,
       username: username,
       identities: keyPair == null ? null : [keyPair],
-      onPasswordRequest: password == null ? null : () => password,
+      onPasswordRequest: handOut,
+      onUserInfoRequest: handOut == null
+          ? null
+          : (request) => List<String>.from(
+              [
+                for (var i = 0; i < request.prompts.length; i++) handOut(),
+              ],
+            ),
       onVerifyHostKey: (type, fingerprint) {
         onHostKeyFingerprint?.call(type, _hex(fingerprint));
         // TOFU: the caller records and compares the fingerprint.
         return true;
       },
+      printDebug: onDebug == null ? null : (line) => onDebug(line ?? ''),
       handshakeTimeout: timeout,
       authTimeout: timeout,
     );
@@ -74,7 +113,14 @@ class TowerConnection {
       await ssh.authenticated.timeout(timeout);
     } catch (e) {
       ssh.close();
-      throw ConnectionError('auth failed: $e');
+      // Surface the SSH-level reason (wrong password, key refused,
+      // host key mismatch) instead of a bare timeout.
+      final detail = ssh.isClosed
+          ? 'connection closed by $host'
+          : 'ssh auth failed: ${sshErrorText(e)}';
+      throw ConnectionError(
+        'auth failed: $detail (user $username, $host:$port)',
+      );
     }
 
     // First connect: install the device key for future connects.
@@ -102,7 +148,7 @@ class TowerConnection {
       }
     });
 
-    return TowerConnection._(ssh, server.port);
+    return TowerConnection._(ssh, server);
   }
 
   /// Idempotent authorized_keys append: grep for the key body first.
@@ -119,14 +165,24 @@ class TowerConnection {
     }
   }
 
-  /// Run one command over the SSH session.
+  /// Run one command over the SSH session and collect its output.
+  ///
+  /// `exitCode` is a plain `int?` that stays null until the remote side
+  /// reports an exit status, and stdout/stderr can still hold buffered
+  /// data after the channel closes — so wait for the exit status and
+  /// drain both streams before returning.
   static Future<ShellResult> _exec(SSHClient ssh, String command) async {
     final session = await ssh.execute(command);
     final out = <int>[];
     final err = <int>[];
-    session.stdout.listen(out.addAll, onError: (Object e) {});
-    session.stderr.listen(err.addAll, onError: (Object e) {});
-    final exitCode = session.exitCode;
+    final drains = Future.wait([
+      session.stdout.forEach(out.addAll).catchError((Object _) {}),
+      session.stderr.forEach(err.addAll).catchError((Object _) {}),
+    ]);
+    final exitCode = await session.waitForExit(
+      timeout: const Duration(seconds: 30),
+    );
+    await drains.timeout(const Duration(seconds: 10));
     return ShellResult(
       exitCode ?? 0,
       utf8.decode(out),
@@ -164,7 +220,10 @@ class TowerConnection {
           ..write('Content-Length: ${payload.length}\r\n');
       }
       head.write('\r\n');
-      socket.write(utf8.encode(head.toString()));
+      // `Socket.write` takes a String; passing bytes would send its
+      // toString() — a bracketed number list — and the server answers
+      // 400 with no JSON envelope.
+      socket.write(head.toString());
       if (payload.isNotEmpty) socket.add(payload);
 
       final data = BytesBuilder();
@@ -179,7 +238,11 @@ class TowerConnection {
 
   /// Read the tower token file over SSH (no tunnel needed).
   Future<String> fetchToken() async {
-    final res = await _exec(ssh, 'cat "\${TOWER_HOME:-}/token" 2>/dev/null'
+    final conn = ssh;
+    if (conn == null) {
+      throw ConnectionError('no SSH session; local-test connection');
+    }
+    final res = await _exec(conn, 'cat "\${TOWER_HOME:-}/token" 2>/dev/null'
         ' || cat ~/Library/"Application Support"/tower/token 2>/dev/null'
         ' || cat ~/.local/share/tower/token 2>/dev/null');
     final token = res.stdout.trim();
@@ -191,14 +254,20 @@ class TowerConnection {
     return token;
   }
 
-  /// `GET /healthz` through the tunnel.
-  Future<bool> health() async {
-    final res = await http('GET', '/healthz');
+  /// `GET /healthz` through the tunnel. This tower version requires the
+  /// bearer token on `/healthz` too (an unauthenticated probe gets 401).
+  Future<bool> health(String token) async {
+    final res = await http(
+      'GET',
+      '/healthz',
+      headers: {'Authorization': 'Bearer $token'},
+    );
     return res.status == 200;
   }
 
   void close() {
-    ssh.close();
+    _forward.close();
+    ssh?.close();
   }
 }
 
@@ -268,4 +337,23 @@ Uint8List _decodeChunked(Uint8List bytes) {
     pos += size + 2;
   }
   return out.takeBytes();
+}
+
+/// Wrap [password] in a handler that hands it out exactly once, then
+/// reports no credential left — dartssh2 re-calls the handler for every
+/// auth attempt, and replaying a rejected password just burns attempts.
+SSHPasswordRequestHandler _once(String password) {
+  var handedOut = false;
+  return () {
+    if (handedOut) return null;
+    handedOut = true;
+    return password;
+  };
+}
+
+/// Pull the human-readable reason out of an SSH error.
+String sshErrorText(Object e) {
+  if (e is SSHError) return e.toString();
+  if (e is TimeoutException) return 'timed out';
+  return e.toString();
 }

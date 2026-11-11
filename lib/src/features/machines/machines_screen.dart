@@ -31,25 +31,32 @@ class _MachinesScreenState extends State<MachinesScreen> {
     _machines = widget.registry.machines();
   });
 
-  Future<void> _connect(StoredMachine machine) async {
+  Future<void> _connect(StoredMachine machine, {bool forcePassword = false}) async {
     String? password;
-    if (!machine.keyBootstrapped) {
-      password = await _promptPassword(machine);
+    if (!machine.keyBootstrapped || forcePassword) {
+      password = await _promptPassword(machine, reinstallKey: forcePassword);
       if (password == null) return;
     }
     await widget.session.connect(machine, password: password);
-    if (mounted) {
-      final state = widget.session.state;
-      if (state.phase == SessionPhase.failed && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(state.error ?? 'connect failed')),
-        );
+    if (!mounted) return;
+    final state = widget.session.state;
+    if (state.phase == SessionPhase.failed) {
+      if (state.needsPassword) {
+        // Key auth was refused: re-bootstrap the key with a password.
+        await _connect(machine, forcePassword: true);
+        return;
       }
-      _reload();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(state.error ?? 'connect failed')),
+      );
     }
+    _reload();
   }
 
-  Future<String?> _promptPassword(StoredMachine machine) {
+  Future<String?> _promptPassword(
+    StoredMachine machine, {
+    bool reinstallKey = false,
+  }) {
     final controller = TextEditingController();
     return showDialog<String>(
       context: context,
@@ -58,9 +65,12 @@ class _MachinesScreenState extends State<MachinesScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'First connection uses your SSH password and installs '
-              'this device\'s public key for future connects.',
+            Text(
+              reinstallKey
+                  ? 'Key sign-in was refused. Enter the SSH password to '
+                      'reinstall this device\'s key.'
+                  : 'First connection uses your SSH password and installs '
+                      'this device\'s public key for future connects.',
             ),
             const SizedBox(height: 12),
             TextField(
