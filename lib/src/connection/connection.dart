@@ -40,6 +40,7 @@ class TowerConnection {
   /// connection so it does not outlive the session.
   final ServerSocket _forward;
   int get _serverPort => _forward.port;
+
   /// Null for the local test constructor; the real one holds the SSH
   /// session the tunnel runs over.
   final SSHClient? ssh;
@@ -62,7 +63,6 @@ class TowerConnection {
     });
     return TowerConnection._(null, server);
   }
-
 
   /// Open a connection. Password auth on first connect (bootstrap appends
   /// the [publicKey] to `authorized_keys`), key auth afterwards.
@@ -96,11 +96,9 @@ class TowerConnection {
       onPasswordRequest: handOut,
       onUserInfoRequest: handOut == null
           ? null
-          : (request) => List<String>.from(
-              [
-                for (var i = 0; i < request.prompts.length; i++) handOut(),
-              ],
-            ),
+          : (request) => List<String>.from([
+              for (var i = 0; i < request.prompts.length; i++) handOut(),
+            ]),
       onVerifyHostKey: (type, fingerprint) {
         onHostKeyFingerprint?.call(type, _hex(fingerprint));
         // TOFU: the caller records and compares the fingerprint.
@@ -166,7 +164,8 @@ class TowerConnection {
   /// Idempotent authorized_keys append: grep for the key body first.
   static Future<void> _bootstrapKey(SSHClient ssh, String publicKey) async {
     final body = publicKey.trim().split(' ')[1];
-    final script = "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+    final script =
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
         "touch ~/.ssh/authorized_keys && "
         "if ! grep -qF '$body' ~/.ssh/authorized_keys 2>/dev/null; then "
         "echo '${publicKey.trim()}' >> ~/.ssh/authorized_keys && "
@@ -239,9 +238,10 @@ class TowerConnection {
       if (payload.isNotEmpty) socket.add(payload);
 
       final data = BytesBuilder();
-      await socket.cast<List<int>>().forEach(data.add).timeout(
-        const Duration(seconds: 70),
-      );
+      await socket
+          .cast<List<int>>()
+          .forEach(data.add)
+          .timeout(const Duration(seconds: 70));
       return _parseHttpResponse(data.takeBytes());
     } finally {
       socket.destroy();
@@ -284,22 +284,23 @@ class TowerConnection {
           headers?.forEach((k, v) => head.write('$k: $v\r\n'));
           head.write('\r\n');
           s.write(head.toString());
-          sub = parseSse(
-            s.cast<List<int>>().timeout(
-              const Duration(seconds: 45),
-              onTimeout: (sink) {
-                sink.addError(ConnectionError('event feed went silent'));
-                sink.close();
-              },
-            ),
-          ).listen(
-            ctl.add,
-            onError: ctl.addError,
-            onDone: () {
-              s.destroy();
-              ctl.close();
-            },
-          );
+          sub =
+              parseSse(
+                s.cast<List<int>>().timeout(
+                  const Duration(seconds: 45),
+                  onTimeout: (sink) {
+                    sink.addError(ConnectionError('event feed went silent'));
+                    sink.close();
+                  },
+                ),
+              ).listen(
+                ctl.add,
+                onError: ctl.addError,
+                onDone: () {
+                  s.destroy();
+                  ctl.close();
+                },
+              );
         } catch (e) {
           if (!ctl.isClosed) {
             ctl.addError(ConnectionError('event feed: $e'));
@@ -322,9 +323,12 @@ class TowerConnection {
     if (conn == null) {
       throw ConnectionError('no SSH session; local-test connection');
     }
-    final res = await _exec(conn, 'cat "\${TOWER_HOME:-}/token" 2>/dev/null'
-        ' || cat ~/Library/"Application Support"/tower/token 2>/dev/null'
-        ' || cat ~/.local/share/tower/token 2>/dev/null');
+    final res = await _exec(
+      conn,
+      'cat "\${TOWER_HOME:-}/token" 2>/dev/null'
+      ' || cat ~/Library/"Application Support"/tower/token 2>/dev/null'
+      ' || cat ~/.local/share/tower/token 2>/dev/null',
+    );
     final token = res.stdout.trim();
     if (token.isEmpty) {
       throw ConnectionError(
@@ -385,7 +389,9 @@ HttpResponse _parseHttpResponse(Uint8List bytes) {
   for (final line in lines.skip(1)) {
     final i = line.indexOf(':');
     if (i > 0) {
-      headers[line.substring(0, i).toLowerCase()] = line.substring(i + 1).trim();
+      headers[line.substring(0, i).toLowerCase()] = line
+          .substring(i + 1)
+          .trim();
     }
   }
   var body = bytes.sublist(headerEnd + 4);

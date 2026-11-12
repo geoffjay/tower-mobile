@@ -29,11 +29,10 @@ enum AgentState {
   done,
   dead;
 
-  static AgentState fromJson(String? v) =>
-      AgentState.values.firstWhere(
-        (s) => s.name == v,
-        orElse: () => AgentState.unknown,
-      );
+  static AgentState fromJson(String? v) => AgentState.values.firstWhere(
+    (s) => s.name == v,
+    orElse: () => AgentState.unknown,
+  );
 }
 
 /// `TaskState`:
@@ -187,10 +186,9 @@ class Agent {
     permissions: json['permissions'] as String? ?? 'default',
     adopted: json['adopted'] as bool? ?? false,
     model: json['model'] as String?,
-    args:
-        (json['args'] as List<dynamic>? ?? const [])
-            .map((a) => a as String)
-            .toList(),
+    args: (json['args'] as List<dynamic>? ?? const [])
+        .map((a) => a as String)
+        .toList(),
     createdAt: json['created_at'] as int? ?? 0,
     updatedAt: json['updated_at'] as int? ?? 0,
   );
@@ -255,10 +253,9 @@ class Message {
     toId: json['to_id'] as String? ?? '',
     kind: MessageKind.fromJson(json['kind'] as String?),
     status: MessageStatus.fromJson(json['status'] as String?),
-    parts:
-        (json['parts'] as List<dynamic>? ?? const [])
-            .map((p) => MessagePart.fromJson(p as Map<String, dynamic>))
-            .toList(),
+    parts: (json['parts'] as List<dynamic>? ?? const [])
+        .map((p) => MessagePart.fromJson(p as Map<String, dynamic>))
+        .toList(),
     deadlineAt: json['deadline_at'] as int?,
     respondedAt: json['responded_at'] as int?,
     createdAt: json['created_at'] as int? ?? 0,
@@ -324,10 +321,9 @@ class Task {
     description: json['description'] as String?,
     state: TaskState.fromJson(json['state'] as String?),
     priority: json['priority'] as int? ?? 0,
-    tags:
-        (json['tags'] as List<dynamic>? ?? const [])
-            .map((t) => t as String)
-            .toList(),
+    tags: (json['tags'] as List<dynamic>? ?? const [])
+        .map((t) => t as String)
+        .toList(),
     attemptCount: json['attempt_count'] as int? ?? 0,
     maxAttempts: json['max_attempts'] as int? ?? 0,
     leaseS: json['lease_s'] as int? ?? 60,
@@ -406,8 +402,7 @@ class WorkflowRun {
     workflowId: json['workflow_id'] as String?,
     workflowName: json['workflow_name'] as String? ?? '',
     state: RunState.fromJson(json['state'] as String?),
-    input:
-        json['input'] as Map<String, dynamic>? ?? const <String, dynamic>{},
+    input: json['input'] as Map<String, dynamic>? ?? const <String, dynamic>{},
     result: _resultText(json['result']),
     error: json['error'] as String?,
     endedAt: json['ended_at'] as int?,
@@ -501,9 +496,8 @@ class WaitingInfo {
 
   final String reason;
 
-  factory WaitingInfo.fromJson(Map<String, dynamic>? json) => WaitingInfo(
-    reason: json == null ? '' : json['reason'] as String? ?? '',
-  );
+  factory WaitingInfo.fromJson(Map<String, dynamic>? json) =>
+      WaitingInfo(reason: json == null ? '' : json['reason'] as String? ?? '');
 }
 
 /// A workflow `definition`'s input declaration, from

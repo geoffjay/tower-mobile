@@ -52,7 +52,7 @@ self-discover at runtime, but v1 hard-codes the routes it needs.
 | Job detail | `GET /v1/tasks/{id}` | `{task, trail}`; trail is the job's events, oldest first |
 | Queue job | `POST /v1/tasks` | `{title, description?, priority?, tags?, assign?, not_before?, lease_s?, max_attempts?, pre_run?, post_run?}` → `{task, waiting}` |
 | Assign job | `POST /v1/tasks/{id}/assign` | `{to, lease_s?}` → `{task, waiting}`; a busy agent gets a reserved job, `waiting` explains why |
-| Cancel / release | `POST /v1/tasks/{id}/cancel`, `…/release` | cancel interrupts the owner |
+| Cancel / release | `POST /v1/tasks/{id}/cancel`, `…/release` | cancel needs no body and interrupts the owner. Release is the owner's call: body `{as, reason?}` with `as` = the task's `owner_id`, else 422 `missing field as` (verified on 0.9.0; the CLI sends the same) |
 | Workflows | `GET /v1/workflows` | `{workflows}` with `open_runs` per workflow |
 | Workflow detail | `GET /v1/workflows/{name}` | `{workflow, definition, source, schedules, runs}` |
 | Start run | `POST /v1/workflows/{name}/runs` | `{input: {k: v}}` → `{run}` |

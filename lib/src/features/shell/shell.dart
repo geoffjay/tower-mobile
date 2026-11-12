@@ -59,25 +59,30 @@ class _AppShellState extends State<AppShell> {
           ),
           body: switch (_tab) {
             AppTab.machines => MachinesScreen(
-                registry: widget.registry,
-                session: session,
-              ),
-            AppTab.fleet => ready
-                ? FleetScreen(client: state.client!, feed: state.feed!)
-                : const _NotConnected(),
-            AppTab.inbox => ready
-                ? InboxScreen(client: state.client!, feed: state.feed!)
-                : const _NotConnected(),
-            AppTab.jobs => ready
-                ? JobsScreen(client: state.client!, feed: state.feed!)
-                : const _NotConnected(),
-            AppTab.workflows => ready
-                ? WorkflowsScreen(client: state.client!, feed: state.feed!)
-                : const _NotConnected(),
+              registry: widget.registry,
+              session: session,
+            ),
+            AppTab.fleet =>
+              ready
+                  ? FleetScreen(client: state.client!, feed: state.feed!)
+                  : const _NotConnected(),
+            AppTab.inbox =>
+              ready
+                  ? InboxScreen(client: state.client!, feed: state.feed!)
+                  : const _NotConnected(),
+            AppTab.jobs =>
+              ready
+                  ? JobsScreen(client: state.client!, feed: state.feed!)
+                  : const _NotConnected(),
+            AppTab.workflows =>
+              ready
+                  ? WorkflowsScreen(client: state.client!, feed: state.feed!)
+                  : const _NotConnected(),
           },
           bottomNavigationBar: NavigationBar(
             selectedIndex: _tab.index,
-            onDestinationSelected: (i) => setState(() => _tab = AppTab.values[i]),
+            onDestinationSelected: (i) =>
+                setState(() => _tab = AppTab.values[i]),
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.dns_outlined),
@@ -126,9 +131,8 @@ class _NotConnected extends StatelessWidget {
   const _NotConnected();
 
   @override
-  Widget build(BuildContext context) => const Center(
-    child: Text('Connect a machine first (Machines tab).'),
-  );
+  Widget build(BuildContext context) =>
+      const Center(child: Text('Connect a machine first (Machines tab).'));
 }
 
 /// Live-feed health in the app bar: a green dot while the event stream

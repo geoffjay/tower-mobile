@@ -21,11 +21,10 @@ enum TowerErrorCode {
   machineOffline,
   unknown;
 
-  static TowerErrorCode fromJson(String? v) => TowerErrorCode.values
-      .firstWhere(
-        (c) => c.name == v?.replaceAll('_', '-'),
-        orElse: () => TowerErrorCode.unknown,
-      );
+  static TowerErrorCode fromJson(String? v) => TowerErrorCode.values.firstWhere(
+    (c) => c.name == v?.replaceAll('_', '-'),
+    orElse: () => TowerErrorCode.unknown,
+  );
 }
 
 /// One server error, decoded from the envelope.
@@ -96,8 +95,7 @@ class TowerClient {
     String path, {
     Object? body,
     Map<String, String>? query,
-  }) =>
-      request(method, path, body: body, query: query);
+  }) => request(method, path, body: body, query: query);
 
   TowerApiError _decodeError(int status, String text) {
     try {
@@ -149,8 +147,18 @@ class TowerClient {
   }
 
   /// `POST /v1/agents/{id}/prompt` — send a prompt.
-  Future<void> prompt(String nameOrId, String text) =>
-      _request('POST', '/v1/agents/$nameOrId/prompt', body: {'text': text});
+  Future<PromptResult> prompt(String nameOrId, String text) async {
+    final v = await _request(
+      'POST',
+      '/v1/agents/$nameOrId/prompt',
+      body: {'text': text},
+    );
+    final m = v as Map<String, dynamic>;
+    return PromptResult(
+      state: m['state'] as String? ?? '',
+      stalled: m['stalled'] as bool? ?? false,
+    );
+  }
 
   /// `POST /v1/agents/{id}/interrupt` — ctrl+c.
   Future<void> interrupt(String nameOrId) =>
@@ -209,13 +217,10 @@ class TowerClient {
   /// `GET /v1/tasks/{id}` — job detail plus trail.
   Future<TaskDetail> task(String id) async {
     final v = await _request('GET', '/v1/tasks/$id');
-    return TaskDetail(
-      Task.fromJson(v['task'] as Map<String, dynamic>),
-      [
-        for (final e in (v['trail'] as List<dynamic>? ?? const []))
-          TowerEvent.fromJson(e as Map<String, dynamic>),
-      ],
-    );
+    return TaskDetail(Task.fromJson(v['task'] as Map<String, dynamic>), [
+      for (final e in (v['trail'] as List<dynamic>? ?? const []))
+        TowerEvent.fromJson(e as Map<String, dynamic>),
+    ]);
   }
 
   /// `POST /v1/tasks` — queue a job, optionally pre-assigned.
@@ -242,9 +247,18 @@ class TowerClient {
     );
   }
 
-  /// `POST /v1/tasks/{id}/release` — back to the queue.
-  Future<void> releaseTask(String id, {String? reason}) =>
-      _request('POST', '/v1/tasks/$id/release', body: {'reason': reason});
+  /// `POST /v1/tasks/{id}/release` — back to the queue. The server
+  /// treats release as the owner's call, so [owner] (the task's
+  /// `owner_id`) must be sent as `as`; the CLI does the same.
+  Future<void> releaseTask(
+    String id, {
+    required String owner,
+    String? reason,
+  }) => _request(
+    'POST',
+    '/v1/tasks/$id/release',
+    body: {'as': owner, 'reason': ?reason},
+  );
 
   /// `POST /v1/tasks/{id}/cancel` — interrupts the owner.
   Future<void> cancelTask(String id) =>
@@ -269,6 +283,17 @@ class TowerClient {
               (l) => TowerEvent.fromJson(jsonDecode(l) as Map<String, dynamic>),
             ),
       );
+}
+
+/// `{ok, state, stalled}` from `POST /v1/agents/{id}/prompt`.
+class PromptResult {
+  const PromptResult({required this.state, required this.stalled});
+
+  /// The agent's state after the prompt landed.
+  final String state;
+
+  /// The prompt was typed but the agent did not start working on it.
+  final bool stalled;
 }
 
 /// Body of `POST /v1/tasks`.
@@ -301,8 +326,7 @@ class CreateTaskBody {
     if (priority != null) 'priority': priority,
     if (tags != null) 'tags': tags,
     if (assign != null) 'assign': assign,
-    if (notBefore != null)
-      'not_before': notBefore!.millisecondsSinceEpoch,
+    if (notBefore != null) 'not_before': notBefore!.millisecondsSinceEpoch,
     if (leaseS != null) 'lease_s': leaseS,
     if (preRun != null) 'pre_run': preRun,
     if (postRun != null) 'post_run': postRun,

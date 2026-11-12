@@ -34,7 +34,10 @@ extension TowerClientWorkflows on TowerClient {
 
   /// `POST /v1/workflows/{name}/runs` — start a run. The body is optional
   /// on the server; we always send `{input: {...}}`.
-  Future<WorkflowRun> runWorkflow(String name, Map<String, String> input) async {
+  Future<WorkflowRun> runWorkflow(
+    String name,
+    Map<String, String> input,
+  ) async {
     final v = await request(
       'POST',
       '/v1/workflows/$name/runs',
@@ -79,8 +82,7 @@ extension TowerClientWorkflows on TowerClient {
   }
 
   /// `POST /v1/runs/{id}/cancel` — cancel a waiting or running run.
-  Future<void> cancelRun(String id) =>
-      request('POST', '/v1/runs/$id/cancel');
+  Future<void> cancelRun(String id) => request('POST', '/v1/runs/$id/cancel');
 }
 
 /// Parse the input declarations from a workflow `definition` JSON.

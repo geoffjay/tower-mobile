@@ -13,8 +13,6 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:pinenacl/ed25519.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-
-
 /// A machine the app can connect to.
 class StoredMachine {
   const StoredMachine({
@@ -32,8 +30,10 @@ class StoredMachine {
   final String host;
   final int port;
   final String username;
+
   /// Trust-on-first-use host key fingerprint, recorded at first connect.
   final String hostKeyFingerprint;
+
   /// True once the device key is in the host's `authorized_keys`.
   final bool keyBootstrapped;
 
@@ -44,16 +44,15 @@ class StoredMachine {
     String? username,
     String? hostKeyFingerprint,
     bool? keyBootstrapped,
-  }) =>
-      StoredMachine(
-        id: id,
-        name: name ?? this.name,
-        host: host ?? this.host,
-        port: port ?? this.port,
-        username: username ?? this.username,
-        hostKeyFingerprint: hostKeyFingerprint ?? this.hostKeyFingerprint,
-        keyBootstrapped: keyBootstrapped ?? this.keyBootstrapped,
-      );
+  }) => StoredMachine(
+    id: id,
+    name: name ?? this.name,
+    host: host ?? this.host,
+    port: port ?? this.port,
+    username: username ?? this.username,
+    hostKeyFingerprint: hostKeyFingerprint ?? this.hostKeyFingerprint,
+    keyBootstrapped: keyBootstrapped ?? this.keyBootstrapped,
+  );
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -101,16 +100,14 @@ class MachineRegistry {
     if (raw == null) return const [];
     final list = jsonDecode(raw) as List<dynamic>;
     return [
-      for (final m in list)
-        StoredMachine.fromJson(m as Map<String, dynamic>),
+      for (final m in list) StoredMachine.fromJson(m as Map<String, dynamic>),
     ];
   }
 
-  Future<void> saveMachines(List<StoredMachine> machines) =>
-      _prefs.setString(
-        _machinesKey,
-        jsonEncode([for (final m in machines) m.toJson()]),
-      );
+  Future<void> saveMachines(List<StoredMachine> machines) => _prefs.setString(
+    _machinesKey,
+    jsonEncode([for (final m in machines) m.toJson()]),
+  );
 
   String? activeMachineId() => _prefs.getString(_activeKey);
 

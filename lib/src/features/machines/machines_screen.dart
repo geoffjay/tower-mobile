@@ -9,7 +9,11 @@ import '../../connection/session.dart';
 
 /// The machine list and add wizard.
 class MachinesScreen extends StatefulWidget {
-  const MachinesScreen({super.key, required this.registry, required this.session});
+  const MachinesScreen({
+    super.key,
+    required this.registry,
+    required this.session,
+  });
 
   final MachineRegistry registry;
   final SessionController session;
@@ -31,7 +35,10 @@ class _MachinesScreenState extends State<MachinesScreen> {
     _machines = widget.registry.machines();
   });
 
-  Future<void> _connect(StoredMachine machine, {bool forcePassword = false}) async {
+  Future<void> _connect(
+    StoredMachine machine, {
+    bool forcePassword = false,
+  }) async {
     String? password;
     if (!machine.keyBootstrapped || forcePassword) {
       password = await _promptPassword(machine, reinstallKey: forcePassword);
@@ -46,9 +53,9 @@ class _MachinesScreenState extends State<MachinesScreen> {
         await _connect(machine, forcePassword: true);
         return;
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.error ?? 'connect failed')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(state.error ?? 'connect failed')));
     }
     _reload();
   }
@@ -68,9 +75,9 @@ class _MachinesScreenState extends State<MachinesScreen> {
             Text(
               reinstallKey
                   ? 'Key sign-in was refused. Enter the SSH password to '
-                      'reinstall this device\'s key.'
+                        'reinstall this device\'s key.'
                   : 'First connection uses your SSH password and installs '
-                      'this device\'s public key for future connects.',
+                        'this device\'s public key for future connects.',
             ),
             const SizedBox(height: 12),
             TextField(
