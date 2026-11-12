@@ -2,9 +2,13 @@
 /// switcher in the app bar.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../api/live_feed.dart';
+import '../../api/models.dart';
+import '../../api/tower_client.dart';
 import '../../connection/registry.dart';
 import '../../connection/session.dart';
 import '../fleet/fleet_screen.dart';
@@ -83,28 +87,28 @@ class _AppShellState extends State<AppShell> {
             selectedIndex: _tab.index,
             onDestinationSelected: (i) =>
                 setState(() => _tab = AppTab.values[i]),
-            destinations: const [
-              NavigationDestination(
+            destinations: [
+              const NavigationDestination(
                 icon: Icon(Icons.dns_outlined),
                 selectedIcon: Icon(Icons.dns),
                 label: 'Machines',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.people_outline),
                 selectedIcon: Icon(Icons.people),
                 label: 'Fleet',
               ),
               NavigationDestination(
-                icon: Icon(Icons.inbox_outlined),
-                selectedIcon: Icon(Icons.inbox),
+                icon: _InboxIcon(state, selected: false),
+                selectedIcon: _InboxIcon(state, selected: true),
                 label: 'Inbox',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.work_outline),
                 selectedIcon: Icon(Icons.work),
                 label: 'Jobs',
               ),
-              NavigationDestination(
+              const NavigationDestination(
                 icon: Icon(Icons.account_tree_outlined),
                 selectedIcon: Icon(Icons.account_tree),
                 label: 'Workflows',
@@ -155,5 +159,90 @@ class _FeedIndicator extends StatelessWidget {
             icon: const Icon(Icons.sync_problem, color: Colors.red),
             onPressed: feed.reconnect,
           ),
+  );
+}
+
+/// The Inbox tab icon, with a count of pending messages when connected.
+class _InboxIcon extends StatelessWidget {
+  const _InboxIcon(this.state, {required this.selected});
+
+  final SessionState state;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(selected ? Icons.inbox : Icons.inbox_outlined);
+    final client = state.client;
+    final feed = state.feed;
+    if (state.phase != SessionPhase.ready || client == null || feed == null) {
+      return icon;
+    }
+    return _InboxCount(client: client, feed: feed, child: icon);
+  }
+}
+
+/// Keeps the pending-message count fresh: fetched once, then refetched
+/// when the feed reports a message change or comes back after a drop.
+class _InboxCount extends StatefulWidget {
+  const _InboxCount({
+    required this.client,
+    required this.feed,
+    required this.child,
+  });
+
+  final TowerClient client;
+  final LiveFeed feed;
+  final Widget child;
+
+  @override
+  State<_InboxCount> createState() => _InboxCountState();
+}
+
+class _InboxCountState extends State<_InboxCount> {
+  int _count = 0;
+  StreamSubscription<TowerEvent>? _sub;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _sub = widget.feed.events.listen((e) {
+      if (e.kind.startsWith('message.')) _schedule();
+    });
+    widget.feed.status.addListener(_onStatus);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _debounce?.cancel();
+    widget.feed.status.removeListener(_onStatus);
+    super.dispose();
+  }
+
+  void _onStatus() {
+    if (widget.feed.status.value == FeedStatus.live) _schedule();
+  }
+
+  void _schedule() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), _refresh);
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final n = (await widget.client.inbox()).length;
+      if (mounted) setState(() => _count = n);
+    } catch (_) {
+      // The Inbox tab shows the error; the badge just keeps its last count.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Badge(
+    isLabelVisible: _count > 0,
+    label: Text('$_count'),
+    child: widget.child,
   );
 }

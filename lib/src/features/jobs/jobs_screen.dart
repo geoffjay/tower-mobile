@@ -1,6 +1,6 @@
 /// Jobs screen: the open queue and the most recent closed jobs, live
 /// from `GET /v1/tasks`. The button queues a job; tapping a job opens
-/// its actions (assign, release, cancel).
+/// its detail page (trail, assign, release, cancel).
 library;
 
 import 'package:flutter/material.dart';
@@ -10,6 +10,7 @@ import '../../api/models.dart';
 import '../../api/tower_client.dart';
 import '../common/actions.dart';
 import '../common/live_resource.dart';
+import 'job_detail_screen.dart';
 
 /// How many closed jobs to show under the queue (herdr shows ten).
 const _closedShown = 10;
@@ -76,9 +77,9 @@ class JobsScreen extends StatelessWidget {
   Widget _tile(BuildContext context, Task t, JobsData data) => _TaskTile(
     t,
     data.agentNames,
-    onTap: () => showActionSheet(
+    onTap: () => openPage(
       context,
-      TaskSheet(client: client, task: t, agents: data.agents),
+      JobDetailScreen(client: client, feed: feed, taskId: t.id),
     ),
   );
 }
@@ -120,23 +121,23 @@ class _TaskTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: StatePill(task.state.name, _color(task.state)),
+      trailing: StatePill(task.state.name, taskStateColor(task.state)),
     );
   }
-
-  static Color _color(TaskState s) => switch (s) {
-    TaskState.queued => Colors.grey,
-    TaskState.assigned => Colors.teal,
-    TaskState.working => Colors.blue,
-    TaskState.inputRequired => Colors.orange,
-    TaskState.completed => Colors.green,
-    TaskState.failed || TaskState.rejected => Colors.red,
-    TaskState.canceled => Colors.blueGrey,
-  };
 }
 
+Color taskStateColor(TaskState s) => switch (s) {
+  TaskState.queued => Colors.grey,
+  TaskState.assigned => Colors.teal,
+  TaskState.working => Colors.blue,
+  TaskState.inputRequired => Colors.orange,
+  TaskState.completed => Colors.green,
+  TaskState.failed || TaskState.rejected => Colors.red,
+  TaskState.canceled => Colors.blueGrey,
+};
+
 /// `Reserved` explanation from an assign or create response, if any.
-String _waitingNote(WaitingInfo w) =>
+String waitingNote(WaitingInfo w) =>
     w.reason.isEmpty ? '' : ' - waiting: ${w.reason}';
 
 /// Queue a job: `POST /v1/tasks`, optionally pre-assigned to an agent.
@@ -187,7 +188,7 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
         ),
       );
       final target = _assign == null ? 'Job queued' : 'Job sent to $_assign';
-      return '$target (${r.task.state.name})${_waitingNote(r.waiting)}';
+      return '$target (${r.task.state.name})${waitingNote(r.waiting)}';
     });
   }
 
@@ -268,152 +269,4 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
       ),
     ],
   );
-}
-
-/// Actions on one job: assign (`/assign`), release (`/release`) and
-/// cancel (`/cancel`, two presses). Only the actions that fit the job's
-/// state are offered.
-class TaskSheet extends StatefulWidget {
-  const TaskSheet({
-    super.key,
-    required this.client,
-    required this.task,
-    required this.agents,
-  });
-
-  final TowerClient client;
-  final Task task;
-  final List<Agent> agents;
-
-  @override
-  State<TaskSheet> createState() => _TaskSheetState();
-}
-
-class _TaskSheetState extends State<TaskSheet> with ActionState {
-  String? _agent;
-  var _confirmCancel = false;
-
-  Task get _task => widget.task;
-
-  bool get _canAssign =>
-      _task.state == TaskState.queued || _task.state == TaskState.assigned;
-  bool get _canRelease =>
-      _task.ownerId != null &&
-      (_task.state == TaskState.assigned ||
-          _task.state == TaskState.working ||
-          _task.state == TaskState.inputRequired);
-
-  void _assign() {
-    final agent = _agent;
-    if (agent == null) {
-      setState(() => error = 'Pick an agent first.');
-      return;
-    }
-    perform(() async {
-      final r = await widget.client.assignTask(_task.id, agent);
-      return 'Job ${r.task.state.name} for $agent${_waitingNote(r.waiting)}';
-    });
-  }
-
-  void _release() => perform(() async {
-    await widget.client.releaseTask(_task.id, owner: _task.ownerId!);
-    return 'Job released to the queue';
-  });
-
-  void _cancel() {
-    if (!_confirmCancel) {
-      setState(() => _confirmCancel = true);
-      return;
-    }
-    perform(() async {
-      await widget.client.cancelTask(_task.id);
-      return 'Job canceled';
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final description = _task.description;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(_task.title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 4),
-        Text(
-          '${_task.state.name} · p${_task.priority}',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (description != null && description.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(description, maxLines: 6, overflow: TextOverflow.ellipsis),
-        ],
-        if (_task.result != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Result: ${_task.result}',
-            maxLines: 8,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-        const SizedBox(height: 12),
-        if (!_task.state.isOpen)
-          const Text('This job is closed; no actions apply.'),
-        if (_canAssign) ...[
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _agent,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Assign to',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    for (final a in widget.agents)
-                      DropdownMenuItem(
-                        value: a.name,
-                        child: Text(
-                          '${a.name} (${a.state.name})',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
-                  onChanged: busy ? null : (v) => setState(() => _agent = v),
-                ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: busy ? null : _assign,
-                child: const Text('Assign'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-        ],
-        errorStrip(),
-        if (_task.state.isOpen)
-          Row(
-            children: [
-              if (_canRelease)
-                OutlinedButton(
-                  onPressed: busy ? null : _release,
-                  child: const Text('Release'),
-                ),
-              const Spacer(),
-              FilledButton.tonal(
-                style: FilledButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.error,
-                ),
-                onPressed: busy ? null : _cancel,
-                child: Text(
-                  _confirmCancel ? 'Tap again to cancel' : 'Cancel job',
-                ),
-              ),
-            ],
-          ),
-      ],
-    );
-  }
 }

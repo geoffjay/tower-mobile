@@ -82,3 +82,50 @@ mixin ActionState<T extends StatefulWidget> on State<T> {
     );
   }
 }
+
+/// Push a full-screen [page]. Like [showActionSheet], a page that pops
+/// with a message has that message shown in a snackbar afterwards.
+Future<void> openPage(BuildContext context, Widget page) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final message = await Navigator.of(context)
+      .push<String>(MaterialPageRoute<String>(builder: (_) => page));
+  if (message != null) {
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+/// Section title inside a detail page.
+class SectionHeader extends StatelessWidget {
+  const SectionHeader(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
+    child: Text(text, style: Theme.of(context).textTheme.titleSmall),
+  );
+}
+
+/// One `label: value` line in a detail page.
+class InfoRow extends StatelessWidget {
+  const InfoRow(this.label, this.value, {super.key});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 96,
+          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ),
+        Expanded(child: SelectableText(value)),
+      ],
+    ),
+  );
+}

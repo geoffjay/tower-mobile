@@ -10,6 +10,7 @@ import '../../api/tower_client.dart';
 import '../../api/tower_workflows.dart';
 import '../common/actions.dart';
 import '../common/live_resource.dart';
+import 'run_detail_screen.dart';
 
 /// How many runs to show (the server returns them newest first).
 const _runsShown = 20;
@@ -54,7 +55,19 @@ class WorkflowsScreen extends StatelessWidget {
         if (data.runs.isEmpty)
           const ListTile(title: Text('No runs yet.'))
         else
-          for (final r in data.runs) _RunTile(r),
+          for (final r in data.runs)
+            _RunTile(
+              r,
+              onTap: () => openPage(
+                context,
+                RunDetailScreen(
+                  client: client,
+                  feed: feed,
+                  runId: r.id,
+                  title: r.workflowName,
+                ),
+              ),
+            ),
       ],
     ),
   );
@@ -98,28 +111,22 @@ class _WorkflowTile extends StatelessWidget {
 }
 
 class _RunTile extends StatelessWidget {
-  const _RunTile(this.run);
+  const _RunTile(this.run, {required this.onTap});
 
   final WorkflowRun run;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) => ListTile(
+    onTap: onTap,
     title: Text(run.workflowName),
     subtitle: Text(
       [timeAgo(run.createdAt), ?run.error].join(' · '),
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
     ),
-    trailing: StatePill(run.state.name, _color(run.state)),
+    trailing: StatePill(run.state.name, runStateColor(run.state)),
   );
-
-  static Color _color(RunState s) => switch (s) {
-    RunState.waiting => Colors.orange,
-    RunState.running => Colors.blue,
-    RunState.completed => Colors.green,
-    RunState.failed => Colors.red,
-    RunState.canceled => Colors.blueGrey,
-  };
 }
 
 /// Start a run: `POST /v1/workflows/{name}/runs`. The inputs come from
