@@ -1,7 +1,8 @@
 /// Prompt sheet for one agent.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/models.dart';
 import '../../api/tower_client.dart';
@@ -69,7 +70,7 @@ class _PromptSheetState extends State<PromptSheet> with ActionState {
       errorStrip(),
       Align(
         alignment: Alignment.centerRight,
-        child: FilledButton(
+        child: M3EButton(
           onPressed: busy ? null : _send,
           child: Text(busy ? 'Sending…' : 'Send'),
         ),

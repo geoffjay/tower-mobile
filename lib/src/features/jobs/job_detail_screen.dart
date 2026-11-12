@@ -2,7 +2,8 @@
 /// (assign, release, cancel).
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -32,7 +33,10 @@ class JobDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('Job')),
+    appBar: M3EAppBar.top(
+      automaticallyImplyLeading: true,
+      title: const Text('Job'),
+    ),
     body: LiveResource<_JobView>(
       feed: feed,
       kinds: const ['task.'],
@@ -220,7 +224,7 @@ class _JobActionsState extends State<_JobActions> with ActionState {
                   ),
                 ),
                 const SizedBox(width: 8),
-                FilledButton(
+                M3EButton(
                   onPressed: busy ? null : _assign,
                   child: const Text('Assign'),
                 ),
@@ -237,9 +241,12 @@ class _JobActionsState extends State<_JobActions> with ActionState {
                   child: const Text('Release'),
                 ),
               const Spacer(),
-              FilledButton.tonal(
-                style: FilledButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.error,
+              M3EButton(
+                style: M3EButtonStyle.tonal,
+                decoration: M3EButtonDecoration(
+                  foregroundColor: WidgetStatePropertyAll(
+                    Theme.of(context).colorScheme.error,
+                  ),
                 ),
                 onPressed: busy ? null : _cancel,
                 child: Text(

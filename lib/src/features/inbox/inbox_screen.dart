@@ -3,7 +3,8 @@
 /// answer, approve, deny or dismiss it.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -196,12 +197,12 @@ class _RespondSheetState extends State<RespondSheet> with ActionState {
                 child: const Text('Deny'),
               ),
               const SizedBox(width: 8),
-              FilledButton(
+              M3EButton(
                 onPressed: busy ? null : () => _approve(true),
                 child: const Text('Approve'),
               ),
             ] else
-              FilledButton(
+              M3EButton(
                 onPressed: busy ? null : _answerText,
                 child: Text(busy ? 'Sending…' : 'Send'),
               ),

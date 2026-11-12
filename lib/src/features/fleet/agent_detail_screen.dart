@@ -4,7 +4,8 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -49,7 +50,10 @@ class AgentDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(agent.name)),
+    appBar: M3EAppBar.top(
+      automaticallyImplyLeading: true,
+      title: Text(agent.name),
+    ),
     floatingActionButton: FloatingActionButton.extended(
       onPressed: () =>
           showActionSheet(context, PromptSheet(client: client, agent: agent)),
@@ -174,7 +178,7 @@ class _TerminalViewState extends State<_TerminalView> {
       return Padding(
         padding: const EdgeInsets.all(16),
         child: _error == null
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: M3ELoadingIndicator())
             : Text(describeError(_error!)),
       );
     }

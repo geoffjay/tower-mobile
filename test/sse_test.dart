@@ -21,24 +21,28 @@ Stream<List<int>> _sliced(List<int> bytes, int size) async* {
 }
 
 void main() {
-  test('frames survive arbitrary socket splits, incl. mid UTF-8 and mid-chunk',
-      () async {
-    final wire = [
-      ...ascii.encode(_head),
-      ..._chunk(': keep-alive\n\n'),
-      ..._chunk('id: 7\nevent: tower-batch\ndata: {"a":"é"}\ndata: {"b":2}\n\n'),
-      ..._chunk('event: tower-batch\r\ndata: x\r\n\r\n'),
-      ...ascii.encode('0\r\n\r\n'),
-    ];
-    for (final size in [1, 3, 1000]) {
-      final frames = await parseSse(_sliced(wire, size)).toList();
-      expect(frames, hasLength(2), reason: 'slice size $size');
-      expect(frames[0].event, 'tower-batch');
-      expect(frames[0].id, '7');
-      expect(frames[0].data, '{"a":"é"}\n{"b":2}');
-      expect(frames[1].data, 'x');
-    }
-  });
+  test(
+    'frames survive arbitrary socket splits, incl. mid UTF-8 and mid-chunk',
+    () async {
+      final wire = [
+        ...ascii.encode(_head),
+        ..._chunk(': keep-alive\n\n'),
+        ..._chunk(
+          'id: 7\nevent: tower-batch\ndata: {"a":"é"}\ndata: {"b":2}\n\n',
+        ),
+        ..._chunk('event: tower-batch\r\ndata: x\r\n\r\n'),
+        ...ascii.encode('0\r\n\r\n'),
+      ];
+      for (final size in [1, 3, 1000]) {
+        final frames = await parseSse(_sliced(wire, size)).toList();
+        expect(frames, hasLength(2), reason: 'slice size $size');
+        expect(frames[0].event, 'tower-batch');
+        expect(frames[0].id, '7');
+        expect(frames[0].data, '{"a":"é"}\n{"b":2}');
+        expect(frames[1].data, 'x');
+      }
+    },
+  );
 
   test('an event split across two chunks is one frame', () async {
     final wire = [
@@ -54,6 +58,9 @@ void main() {
     final wire = ascii.encode(
       'HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\n\r\n',
     );
-    expect(parseSse(_sliced(wire, 5)).toList(), throwsA(isA<ConnectionError>()));
+    expect(
+      parseSse(_sliced(wire, 5)).toList(),
+      throwsA(isA<ConnectionError>()),
+    );
   });
 }

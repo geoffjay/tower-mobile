@@ -2,7 +2,7 @@
 /// agent to open its detail page.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';

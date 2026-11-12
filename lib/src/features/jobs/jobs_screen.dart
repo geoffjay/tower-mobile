@@ -3,7 +3,8 @@
 /// its detail page (trail, assign, release, cancel).
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -262,7 +263,7 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
       errorStrip(),
       Align(
         alignment: Alignment.centerRight,
-        child: FilledButton(
+        child: M3EButton(
           onPressed: busy ? null : _submit,
           child: Text(busy ? 'Queuing…' : 'Queue'),
         ),

@@ -58,6 +58,7 @@ to touch the KB on every edit.
 ## Plans
 
 * [tower-mobile v1: Flutter Android client](plans/mobile-v1.md) - implementation plan for the first Android release.
+* [tower-mobile v1: follow-ups](plans/mobile-v1-follow-ups.md) - unverified paths, unseen UI and cleanup left after M1-M6.
 
 ## References
 

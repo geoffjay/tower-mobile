@@ -175,3 +175,7 @@ bootstrap, forward, health) run on an Android emulator.
 - No herdr dependency or control of herdr from the app.
 - No tunneling tool beyond SSH (no Tailscale setup automation).
 - No workflow authoring or schedule management.
+
+## Follow-ups
+
+See [tower-mobile v1: follow-ups](mobile-v1-follow-ups.md).

@@ -4,7 +4,8 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -32,8 +33,35 @@ class AppShell extends StatefulWidget {
   State<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   AppTab _tab = AppTab.machines;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Battery: no event stream while the app is in the background.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+        widget.session.pause();
+      case AppLifecycleState.resumed:
+        widget.session.resume();
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        break;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +73,7 @@ class _AppShellState extends State<AppShell> {
         final state = snapshot.data ?? session.state;
         final ready = state.phase == SessionPhase.ready;
         return Scaffold(
-          appBar: AppBar(
+          appBar: M3EAppBar.top(
             title: Text(_titleFor(_tab)),
             actions: [
               if (ready) _FeedIndicator(state.feed!),
@@ -83,32 +111,32 @@ class _AppShellState extends State<AppShell> {
                   ? WorkflowsScreen(client: state.client!, feed: state.feed!)
                   : const _NotConnected(),
           },
-          bottomNavigationBar: NavigationBar(
+          bottomNavigationBar: M3ENavigationBar(
             selectedIndex: _tab.index,
             onDestinationSelected: (i) =>
                 setState(() => _tab = AppTab.values[i]),
             destinations: [
-              const NavigationDestination(
+              const M3ENavigationBarDestination(
                 icon: Icon(Icons.dns_outlined),
                 selectedIcon: Icon(Icons.dns),
                 label: 'Machines',
               ),
-              const NavigationDestination(
+              const M3ENavigationBarDestination(
                 icon: Icon(Icons.people_outline),
                 selectedIcon: Icon(Icons.people),
                 label: 'Fleet',
               ),
-              NavigationDestination(
+              M3ENavigationBarDestination(
                 icon: _InboxIcon(state, selected: false),
                 selectedIcon: _InboxIcon(state, selected: true),
                 label: 'Inbox',
               ),
-              const NavigationDestination(
+              const M3ENavigationBarDestination(
                 icon: Icon(Icons.work_outline),
                 selectedIcon: Icon(Icons.work),
                 label: 'Jobs',
               ),
-              const NavigationDestination(
+              const M3ENavigationBarDestination(
                 icon: Icon(Icons.account_tree_outlined),
                 selectedIcon: Icon(Icons.account_tree),
                 label: 'Workflows',

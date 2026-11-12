@@ -2,7 +2,8 @@
 /// wizard with first-connection key bootstrap.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../connection/registry.dart';
 import '../../connection/session.dart';
@@ -96,7 +97,7 @@ class _MachinesScreenState extends State<MachinesScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          M3EButton(
             onPressed: () => Navigator.pop(context, controller.text),
             child: const Text('Connect'),
           ),
@@ -198,11 +199,7 @@ class _MachineTile extends StatelessWidget {
         '${isActive ? ' · ${phase.name}' : ''}',
       ),
       trailing: isActive && phase == SessionPhase.connecting
-          ? const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
+          ? const SizedBox(width: 20, height: 20, child: M3ELoadingIndicator())
           : TextButton(onPressed: onConnect, child: const Text('Connect')),
     );
   }
@@ -287,7 +284,7 @@ class _AddMachineDialogState extends State<_AddMachineDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Add')),
+        M3EButton(onPressed: _submit, child: const Text('Add')),
       ],
     );
   }

@@ -2,7 +2,8 @@
 /// `GET /v1/workflows` and `GET /v1/runs`.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -202,7 +203,7 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
       if (detail == null) {
         return const Padding(
           padding: EdgeInsets.all(24),
-          child: Center(child: CircularProgressIndicator()),
+          child: Center(child: M3ELoadingIndicator()),
         );
       }
       final specs = detail.inputs;
@@ -237,7 +238,7 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
           errorStrip(),
           Align(
             alignment: Alignment.centerRight,
-            child: FilledButton(
+            child: M3EButton(
               onPressed: busy || !widget.workflow.enabled
                   ? null
                   : () => _start(specs),

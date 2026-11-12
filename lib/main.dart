@@ -1,7 +1,8 @@
 /// App entry: wires the registry, session controller, and screens.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'src/connection/registry.dart';
 import 'src/connection/session.dart';
@@ -44,17 +45,22 @@ class _TowerMobileAppState extends State<TowerMobileApp> {
     super.dispose();
   }
 
+  static const _seed = Colors.blueGrey;
+
   @override
   Widget build(BuildContext context) {
-    if (_registry == null || _session == null) {
-      return const MaterialApp(
-        home: Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
-    }
-    return MaterialApp(
+    final registry = _registry;
+    final session = _session;
+    return M3EMaterialApp(
       title: 'tower',
-      theme: ThemeData(colorSchemeSeed: Colors.blueGrey, useMaterial3: true),
-      home: AppShell(registry: _registry!, session: _session!),
+      data: M3EThemeData.light(seedColor: _seed),
+      autoTheming: true,
+      dynamicColoring: true,
+      drawUnderSystemBars: true,
+      debugShowCheckedModeBanner: false,
+      home: registry == null || session == null
+          ? const Scaffold(body: Center(child: M3ELoadingIndicator()))
+          : AppShell(registry: registry, session: session),
     );
   }
 }

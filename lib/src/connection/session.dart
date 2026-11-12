@@ -91,7 +91,83 @@ class SessionController extends Stream<SessionState> {
   /// Connect [machine]. First connect (no key bootstrap yet) needs
   /// [password] and installs the device public key on the host.
   Future<void> connect(StoredMachine machine, {String? password}) async {
-    await disconnect();
+    _recovery = null;
+    await _connect(machine, password: password);
+  }
+
+  /// Delays before each automatic reconnect attempt after a drop.
+  static const _recoverDelays = [
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+    Duration(seconds: 10),
+    Duration(seconds: 20),
+    Duration(seconds: 30),
+  ];
+
+  /// Identifies the running recovery loop; cleared by an explicit
+  /// connect or disconnect, which makes the loop stop.
+  Object? _recovery;
+
+  Future<void> _recover(StoredMachine machine) async {
+    final token = _recovery = Object();
+    for (var i = 0; i < _recoverDelays.length; i++) {
+      _set(
+        SessionState(
+          phase: SessionPhase.connecting,
+          machine: machine,
+          error:
+              'connection to ${machine.name} lost; reconnecting '
+              '(${i + 1}/${_recoverDelays.length})',
+        ),
+      );
+      await Future<void>.delayed(_recoverDelays[i]);
+      if (!identical(_recovery, token)) return;
+      await _connect(machine);
+      if (!identical(_recovery, token)) return;
+      final s = _state;
+      if (s.phase == SessionPhase.ready || s.needsPassword) break;
+      machine = s.machine ?? machine;
+    }
+    if (identical(_recovery, token)) _recovery = null;
+    if (_state.phase != SessionPhase.ready && !_state.needsPassword) {
+      _set(
+        SessionState(
+          phase: SessionPhase.failed,
+          machine: machine,
+          error: 'connection to ${machine.name} lost; tap it to reconnect',
+        ),
+      );
+    }
+  }
+
+  /// The app went to the background: close the event stream. The SSH
+  /// session stays; Android may drop it, and [resume] finds out.
+  void pause() => _state.feed?.pause();
+
+  /// The app is back: probe the tunnel. A dead one is closed, which
+  /// starts recovery; a live one reopens the feed from its cursor.
+  Future<void> resume() async {
+    final conn = _conn;
+    final client = _state.client;
+    if (conn == null || client == null || _state.phase != SessionPhase.ready) {
+      return;
+    }
+    bool ok;
+    try {
+      ok = await conn.health(client.token).timeout(const Duration(seconds: 8));
+    } catch (_) {
+      ok = false;
+    }
+    if (!identical(_conn, conn)) return;
+    if (ok) {
+      _state.feed?.resume();
+    } else {
+      conn.close();
+    }
+  }
+
+  Future<void> _connect(StoredMachine machine, {String? password}) async {
+    await _teardown();
     _set(SessionState(phase: SessionPhase.connecting, machine: machine));
 
     var useKey = false;
@@ -129,23 +205,32 @@ class SessionController extends Stream<SessionState> {
       _set(_state.copyWith(phase: SessionPhase.connected));
 
       // TOFU: record the fingerprint at first sight; refuse a change.
-      if (machine.hostKeyFingerprint.isEmpty) {
-        final machines = _registry.machines();
-        final i = machines.indexWhere((m) => m.id == machine.id);
-        if (i >= 0 && _fingerprint != null) {
-          machine = machine.copyWith(
-            hostKeyFingerprint: _fingerprint,
-            keyBootstrapped: password != null,
-          );
-          machines[i] = machine;
-          await _registry.saveMachines(machines);
-        }
-      } else if (_fingerprint != null &&
+      if (machine.hostKeyFingerprint.isNotEmpty &&
+          _fingerprint != null &&
           machine.hostKeyFingerprint != _fingerprint) {
         throw ConnectionError(
           'host key changed: was ${machine.hostKeyFingerprint}, '
           'now $_fingerprint',
         );
+      }
+      // A password login installed the device key on the host. Record
+      // that even when the fingerprint was saved earlier (an attempt
+      // that connected but failed later), or key auth never turns on.
+      final firstSight =
+          machine.hostKeyFingerprint.isEmpty && _fingerprint != null;
+      if (firstSight || (password != null && !machine.keyBootstrapped)) {
+        final machines = _registry.machines();
+        final i = machines.indexWhere((m) => m.id == machine.id);
+        if (i >= 0) {
+          machine = machine.copyWith(
+            hostKeyFingerprint: firstSight
+                ? _fingerprint
+                : machine.hostKeyFingerprint,
+            keyBootstrapped: machine.keyBootstrapped || password != null,
+          );
+          machines[i] = machine;
+          await _registry.saveMachines(machines);
+        }
       }
 
       // Token: cache in secure storage; refetch when it goes stale.
@@ -174,21 +259,16 @@ class SessionController extends Stream<SessionState> {
           feed: LiveFeed(client),
         ),
       );
-      // The tunnel can die under us (network change, sshd restart). Say
-      // so, instead of leaving screens to fail one request at a time.
+      // The tunnel can die under us (network change, sshd restart,
+      // Android killing the socket in the background). Reconnect on our
+      // own with key auth; screens refetch when the new feed goes live.
       unawaited(
         conn.closed.then((_) {
           if (!identical(_conn, conn) || _state.phase != SessionPhase.ready) {
             return;
           }
           _state.feed?.dispose();
-          _set(
-            SessionState(
-              phase: SessionPhase.failed,
-              machine: machine,
-              error: 'connection to ${machine.name} lost; tap it to reconnect',
-            ),
-          );
+          unawaited(_recover(machine));
         }),
       );
     } on ConnectionError catch (e) {
@@ -213,6 +293,11 @@ class SessionController extends Stream<SessionState> {
   }
 
   Future<void> disconnect() async {
+    _recovery = null;
+    await _teardown();
+  }
+
+  Future<void> _teardown() async {
     _state.feed?.dispose();
     _conn?.close();
     _conn = null;
@@ -220,6 +305,7 @@ class SessionController extends Stream<SessionState> {
   }
 
   void dispose() {
+    _recovery = null;
     _state.feed?.dispose();
     _conn?.close();
     _ctl.close();

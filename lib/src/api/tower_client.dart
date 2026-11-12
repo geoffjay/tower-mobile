@@ -267,10 +267,12 @@ class TowerClient {
   /// `GET /v1/events` — the live feed. The server batches events into
   /// `tower-batch` SSE frames whose data is newline-joined `Event` JSON.
   /// [exclude] is the server filter syntax, e.g. `type:agent.output`.
-  Stream<TowerEvent> events({String? exclude}) => _conn
+  /// [cursor] resumes after that event `seq`; without it the stream
+  /// starts at the head.
+  Stream<TowerEvent> events({String? exclude, int? cursor}) => _conn
       .sse(
         '/v1/events',
-        query: {'exclude': ?exclude},
+        query: {'exclude': ?exclude, if (cursor != null) 'cursor': '$cursor'},
         headers: {'Authorization': 'Bearer $token'},
       )
       .where((f) => f.event == 'tower-batch')

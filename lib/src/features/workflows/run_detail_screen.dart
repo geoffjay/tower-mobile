@@ -2,7 +2,8 @@
 /// it while it is open.
 library;
 
-import 'package:flutter/material.dart' hide StepState;
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart' hide StepState;
 
 import '../../api/live_feed.dart';
 import '../../api/models.dart';
@@ -53,7 +54,7 @@ class RunDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(title)),
+    appBar: M3EAppBar.top(automaticallyImplyLeading: true, title: Text(title)),
     body: LiveResource<_RunView>(
       feed: feed,
       kinds: const ['workflow.'],
@@ -165,9 +166,12 @@ class _CancelRunState extends State<_CancelRun> with ActionState {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         errorStrip(),
-        FilledButton.tonal(
-          style: FilledButton.styleFrom(
-            foregroundColor: Theme.of(context).colorScheme.error,
+        M3EButton(
+          style: M3EButtonStyle.tonal,
+          decoration: M3EButtonDecoration(
+            foregroundColor: WidgetStatePropertyAll(
+              Theme.of(context).colorScheme.error,
+            ),
           ),
           onPressed: busy ? null : _cancel,
           child: Text(_confirm ? 'Tap again to cancel run' : 'Cancel run'),

@@ -7,7 +7,7 @@
 /// input and retry.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/tower_client.dart';
 

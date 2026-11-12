@@ -4,7 +4,8 @@ library;
 
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_3_expressive/material_3_expressive.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../api/live_feed.dart';
 
@@ -108,7 +109,7 @@ class _LiveResourceState<T> extends State<LiveResource<T>> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loaded) return const Center(child: CircularProgressIndicator());
+    if (!_loaded) return const Center(child: M3ELoadingIndicator());
     final data = _data;
     if (data == null) {
       return _ErrorView(error: '$_error', onRetry: _refresh);
@@ -148,7 +149,7 @@ class _ErrorView extends StatelessWidget {
         children: [
           Text(error, textAlign: TextAlign.center),
           const SizedBox(height: 12),
-          FilledButton(onPressed: onRetry, child: const Text('Retry')),
+          M3EButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     ),
