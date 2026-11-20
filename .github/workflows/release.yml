@@ -1,0 +1,178 @@
+name: Release
+
+# Tag-push release pipeline:
+# v* tag push (or manual workflow_dispatch) -> CI gate -> Android release APKs
+# (arm64-v8a, x86_64, universal) + SHA-256 checksums -> GitHub Release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v1.0.0)"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  ci:
+    name: CI
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build Android APKs
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          RAW="${VERSION#v}"
+          BUILD_NAME="${RAW%%-*}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_name=${BUILD_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.version }}
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Configure release keystore (optional)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "${KEYSTORE_BASE64}" ]; then
+            KEYSTORE_FILE="${RUNNER_TEMP}/release-keystore.jks"
+            printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_FILE}"
+            echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_FILE}" >> "$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=${KEY_ALIAS}" >> "$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=${KEY_PASSWORD}" >> "$GITHUB_ENV"
+          else
+            echo "::notice::ANDROID_KEYSTORE_BASE64 is not set; falling back to debug signing config."
+          fi
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build ABI-split release APKs
+        run: |
+          flutter build apk --release --split-per-abi \
+            --build-name="${{ steps.version.outputs.build_name }}" \
+            --build-number="${{ github.run_number }}"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+            "dist/tower-mobile-${{ steps.version.outputs.version }}-android-arm64-v8a.apk"
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+            "dist/tower-mobile-${{ steps.version.outputs.version }}-android-armeabi-v7a.apk"
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk \
+            "dist/tower-mobile-${{ steps.version.outputs.version }}-android-x86_64.apk"
+
+      - name: Build universal release APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ steps.version.outputs.build_name }}" \
+            --build-number="${{ github.run_number }}"
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            "dist/tower-mobile-${{ steps.version.outputs.version }}-android-universal.apk"
+
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          sha256sum *.apk > checksums.txt
+          cat checksums.txt
+
+      - name: Clean up temporary keystore
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/release-keystore.jks"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tower-mobile-android-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.apk
+            dist/checksums.txt
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tower-mobile-android-${{ needs.build.outputs.version }}
+          path: artifacts
+
+      - name: Verify expected files
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          expected=(
+            "tower-mobile-${VERSION}-android-arm64-v8a.apk"
+            "tower-mobile-${VERSION}-android-armeabi-v7a.apk"
+            "tower-mobile-${VERSION}-android-x86_64.apk"
+            "tower-mobile-${VERSION}-android-universal.apk"
+            "checksums.txt"
+          )
+          for f in "${expected[@]}"; do
+            [ -f "artifacts/$f" ] || { echo "::error::missing artifact $f"; exit 1; }
+          done
+
+      - name: Delete existing release on manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: gh release delete "${{ needs.build.outputs.version }}" --yes || true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ needs.build.outputs.version }}
+          name: ${{ needs.build.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(needs.build.outputs.version, '-') }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.apk
+            artifacts/checksums.txt

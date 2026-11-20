@@ -1,3 +1,10 @@
+[![CI][ci-badge]][ci-url]
+
+[ci-badge]: https://github.com/geoffjay/tower-mobile/actions/workflows/ci.yml/badge.svg
+[ci-url]: https://github.com/geoffjay/tower-mobile/actions/workflows/ci.yml
+
+---
+
 # Tower Mobile
 
 Android client for [Tower](https://github.com/geoffjay/tower). Monitor and control coding agents on remote hosts over SSH.
@@ -42,3 +49,18 @@ flutter test               # run unit and widget tests
 flutter run                # run on a connected Android device
 flutter build apk --debug  # build a debug APK
 ```
+
+## Releasing
+
+Push a `v*` tag to run CI, build release APKs (`arm64-v8a`, `armeabi-v7a`, `x86_64`, and `universal`) with `checksums.txt`, and publish a GitHub Release:
+
+```sh
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+Set these optional repository secrets to sign release APKs with a production keystore (otherwise builds fall back to debug signing):
+
+- `ANDROID_KEYSTORE_BASE64`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
