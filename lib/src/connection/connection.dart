@@ -41,28 +41,7 @@ class TowerConnection {
   final ServerSocket _forward;
   int get _serverPort => _forward.port;
 
-  /// Null for the local test constructor; the real one holds the SSH
-  /// session the tunnel runs over.
-  final SSHClient? ssh;
-
-  /// Test-only: bind the forward server directly to a local address,
-  /// no SSH underneath. Used by the e2e harness against a local tower.
-  static Future<TowerConnection> connectLocal({
-    required String forwardTo,
-    required int forwardPort,
-  }) async {
-    final server = await ServerSocket.bind('127.0.0.1', 0);
-    server.listen((client) async {
-      try {
-        final remote = await Socket.connect(forwardTo, forwardPort);
-        client.listen(remote.add, onDone: () => remote.destroy());
-        remote.listen(client.add, onDone: () => client.destroy());
-      } catch (_) {
-        client.destroy();
-      }
-    });
-    return TowerConnection._(null, server);
-  }
+  final SSHClient ssh;
 
   /// Open a connection. Password auth on first connect (bootstrap appends
   /// the [publicKey] to `authorized_keys`), key auth afterwards.
@@ -319,12 +298,8 @@ class TowerConnection {
 
   /// Read the tower token file over SSH (no tunnel needed).
   Future<String> fetchToken() async {
-    final conn = ssh;
-    if (conn == null) {
-      throw ConnectionError('no SSH session; local-test connection');
-    }
     final res = await _exec(
-      conn,
+      ssh,
       'cat "\${TOWER_HOME:-}/token" 2>/dev/null'
       ' || cat ~/Library/"Application Support"/tower/token 2>/dev/null'
       ' || cat ~/.local/share/tower/token 2>/dev/null',
@@ -353,13 +328,13 @@ class TowerConnection {
   /// network, server close, [close]). Never throws.
   Future<void> get closed async {
     try {
-      await ssh?.done;
+      await ssh.done;
     } catch (_) {}
   }
 
   void close() {
     _forward.close();
-    ssh?.close();
+    ssh.close();
   }
 }
 

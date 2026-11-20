@@ -73,9 +73,10 @@ key pair, `flutter_secure_storage` for the token and machine list,
 
 ## Screens (v1)
 
-1. **Machines** — list of added machines, connect status, add-machine
-   wizard (host, port, username, password; bootstrap key on first
-   connect), switch active machine. Pull-to-refresh re-runs health.
+1. **Host switcher (app-bar pill + sheet)** — saved hosts, connect status,
+   add-host dialog (host, port, username; password bootstraps the device
+   key on first connect), disconnect, and two-press remove. Boot
+   auto-connects the active key-bootstrapped host.
 2. **Fleet** (`GET /v1/agents`) — agent rows with state dot
    (`working/blocked/done/idle/dead` colors from the herdr palette),
    name, kind, owned job. Tap opens **Agent detail**: facts, prompt

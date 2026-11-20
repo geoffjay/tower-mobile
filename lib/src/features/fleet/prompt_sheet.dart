@@ -7,6 +7,8 @@ import 'package:material_ui/material_ui.dart';
 import '../../api/models.dart';
 import '../../api/tower_client.dart';
 import '../common/actions.dart';
+import '../common/live_resource.dart';
+import 'fleet_screen.dart' show agentStateTone;
 
 /// Send a prompt to one agent: `POST /v1/agents/{id}/prompt`.
 class PromptSheet extends StatefulWidget {
@@ -30,7 +32,10 @@ class _PromptSheetState extends State<PromptSheet> with ActionState {
 
   void _send() {
     final text = _text.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) {
+      setState(() => error = 'Enter a prompt first.');
+      return;
+    }
     perform(() async {
       final r = await widget.client.prompt(widget.agent.name, text);
       return r.stalled
@@ -45,13 +50,21 @@ class _PromptSheetState extends State<PromptSheet> with ActionState {
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
-      Text(
-        'Prompt ${widget.agent.name}',
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      Text(
-        'State: ${widget.agent.state.name}',
-        style: Theme.of(context).textTheme.bodySmall,
+      Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Prompt ${widget.agent.name}',
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+          StatePill(
+            widget.agent.state.name,
+            agentStateTone(widget.agent.state),
+            showDot: true,
+          ),
+        ],
       ),
       const SizedBox(height: 12),
       TextField(
@@ -63,6 +76,7 @@ class _PromptSheetState extends State<PromptSheet> with ActionState {
         textCapitalization: TextCapitalization.sentences,
         decoration: const InputDecoration(
           labelText: 'Prompt',
+          hintText: 'Describe what this agent should work on…',
           border: OutlineInputBorder(),
         ),
       ),
@@ -70,9 +84,10 @@ class _PromptSheetState extends State<PromptSheet> with ActionState {
       errorStrip(),
       Align(
         alignment: Alignment.centerRight,
-        child: M3EButton(
+        child: M3EButton.icon(
+          icon: const Icon(Icons.send_rounded, size: 18),
           onPressed: busy ? null : _send,
-          child: Text(busy ? 'Sending…' : 'Send'),
+          label: Text(busy ? 'Sending…' : 'Send prompt'),
         ),
       ),
     ],

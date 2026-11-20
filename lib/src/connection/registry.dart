@@ -119,6 +119,19 @@ class MachineRegistry {
     }
   }
 
+  /// Remove a saved machine and wipe its cached bearer token.
+  Future<void> removeMachine(String machineId) async {
+    final remaining = [
+      for (final m in machines())
+        if (m.id != machineId) m,
+    ];
+    await saveMachines(remaining);
+    if (activeMachineId() == machineId) {
+      await setActiveMachine(null);
+    }
+    await clearTowerToken(machineId);
+  }
+
   // --------------------------------------------------------- secrets
 
   Future<String?> towerToken(String machineId) =>

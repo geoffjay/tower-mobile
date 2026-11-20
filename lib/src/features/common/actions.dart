@@ -1,12 +1,14 @@
-/// Shared plumbing for the action sheets (prompt, respond, queue job,
-/// assign, release, cancel, run workflow).
+/// Shared plumbing for action sheets, detail cards, and segmented lists.
 ///
-/// A sheet runs one server call. Success closes the sheet with a
-/// message the caller shows in a snackbar. Failure keeps the sheet open
-/// and shows the error in a strip inside it, so the user can fix the
-/// input and retry.
+/// Modal sheets run one server call via [ActionState.perform]: success closes
+/// the sheet with a message shown in a snackbar; failure keeps the sheet open
+/// with [ActionState.errorStrip]. In-page actions use [ActionState.performInline]
+/// so the detail page stays open and refreshes in place.
 library;
 
+import 'dart:math' as math;
+
+import 'package:material_3_expressive/material_3_expressive.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../api/tower_client.dart';
@@ -19,32 +21,38 @@ String describeError(Object e) => switch (e) {
   _ => '$e',
 };
 
-/// Open [sheet] as a modal bottom sheet that rises above the keyboard.
-/// Returns the success message the sheet popped with, if any, and shows
-/// it in a snackbar.
-Future<void> showActionSheet(BuildContext context, Widget sheet) async {
-  final messenger = ScaffoldMessenger.of(context);
-  final message = await showModalBottomSheet<String>(
+/// Open [sheet] as a modal bottom sheet that clears both the keyboard and
+/// the system gesture bar, returning any typed result [R].
+Future<R?> showTypedSheet<R>(BuildContext context, Widget sheet) {
+  return showModalBottomSheet<R>(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (context) => Padding(
-      padding: EdgeInsets.fromLTRB(
-        16,
-        0,
-        16,
-        16 + MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: SingleChildScrollView(child: sheet),
-    ),
+    builder: (context) {
+      final mq = MediaQuery.of(context);
+      final bottomInset = math.max(mq.viewInsets.bottom, mq.viewPadding.bottom);
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 16 + bottomInset),
+        child: SingleChildScrollView(child: sheet),
+      );
+    },
   );
-  if (message != null) {
+}
+
+/// Open [sheet] as a modal bottom sheet; when it pops with a message,
+/// display that message in a snackbar.
+Future<void> showActionSheet(BuildContext context, Widget sheet) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final message = await showTypedSheet<String>(context, sheet);
+  if (message != null && message.isNotEmpty) {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
-/// State mixin for a sheet: [perform] runs a call, pops with its message
-/// on success, shows [errorStrip] on failure.
+/// State mixin for action widgets:
+/// - [perform] pops the enclosing sheet/page with a snackbar message.
+/// - [performInline] stays on the current page, shows a snackbar, and
+///   invokes [onSuccess] so the page can refetch in place.
 mixin ActionState<T extends StatefulWidget> on State<T> {
   bool busy = false;
   String? error;
@@ -66,6 +74,32 @@ mixin ActionState<T extends StatefulWidget> on State<T> {
     }
   }
 
+  Future<void> performInline(
+    Future<String> Function() action, {
+    Future<void> Function()? onSuccess,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      busy = true;
+      error = null;
+    });
+    try {
+      final message = await action();
+      if (onSuccess != null) await onSuccess();
+      if (!mounted) return;
+      setState(() => busy = false);
+      if (message.isNotEmpty) {
+        messenger.showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        busy = false;
+        error = describeError(e);
+      });
+    }
+  }
+
   Widget errorStrip() {
     final text = error;
     if (text == null) return const SizedBox.shrink();
@@ -73,12 +107,25 @@ mixin ActionState<T extends StatefulWidget> on State<T> {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: scheme.errorContainer,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Text(text, style: TextStyle(color: scheme.onErrorContainer)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.error_outline_rounded,
+            size: 18,
+            color: scheme.onErrorContainer,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: TextStyle(color: scheme.onErrorContainer)),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -89,25 +136,110 @@ Future<void> openPage(BuildContext context, Widget page) async {
   final messenger = ScaffoldMessenger.of(context);
   final message = await Navigator.of(context)
       .push<String>(MaterialPageRoute<String>(builder: (_) => page));
-  if (message != null) {
+  if (message != null && message.isNotEmpty) {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
-/// Section title inside a detail page.
+/// Section title inside a list or detail page.
 class SectionHeader extends StatelessWidget {
   const SectionHeader(this.text, {super.key});
 
   final String text;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 20, 16, 6),
-    child: Text(text, style: Theme.of(context).textTheme.titleSmall),
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
-/// One `label: value` line in a detail page.
+/// Expressive filled surface card wrapping a group of [InfoRow]s.
+class InfoCard extends StatelessWidget {
+  const InfoCard({required this.children, super.key});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: M3ECard(
+        variant: M3ECardVariant.filled,
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        focusable: false,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: children,
+        ),
+      ),
+    );
+  }
+}
+
+/// Expressive filled surface card for multi-line prose (Description, Result).
+class ContentCard extends StatelessWidget {
+  const ContentCard(this.text, {super.key});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: M3ECard(
+        variant: M3ECardVariant.filled,
+        color: scheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(16),
+        focusable: false,
+        padding: const EdgeInsets.all(14),
+        width: double.infinity,
+        child: SelectableText(text),
+      ),
+    );
+  }
+}
+
+/// Shared segmented M3 Expressive card list (`16dp` outer, `4dp` inner corners).
+class SegmentedCardList extends StatelessWidget {
+  const SegmentedCardList({
+    required this.itemCount,
+    required this.itemBuilder,
+    this.margin = const EdgeInsets.symmetric(horizontal: 16),
+    super.key,
+  });
+
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return M3EList(
+      itemCount: itemCount,
+      itemBuilder: itemBuilder,
+      variant: M3ECardVariant.filled,
+      color: scheme.surfaceContainerLow,
+      margin: margin,
+    );
+  }
+}
+
+/// One `label: value` line inside an [InfoCard].
 class InfoRow extends StatelessWidget {
   const InfoRow(this.label, this.value, {super.key});
 
@@ -115,17 +247,24 @@ class InfoRow extends StatelessWidget {
   final String value;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 96,
-          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
-        ),
-        Expanded(child: SelectableText(value)),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ),
+          Expanded(child: SelectableText(value)),
+        ],
+      ),
+    );
+  }
 }

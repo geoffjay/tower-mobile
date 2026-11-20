@@ -10,8 +10,6 @@ generated:
 
 # tower-mobile v1: follow-ups
 
-Describe tower-mobile v1: follow-ups here.
-
 Milestones M1-M6 of [tower-mobile v1](mobile-v1.md) are built and run on a
 Pixel 7 against the host `kobo`. This page lists what is not yet proven or
 not yet clean. Each item says what to do and how to know it is done.
@@ -43,20 +41,20 @@ never ran, because that server had no agents and no agent-sent messages.
   running run and the run page shows `canceled`.
 - **Agent terminal text.** The UI dump does not expose the text. Check
   by eye that the tail shows the agent's last lines and refreshes.
-- **"Reconnecting (n/5)" text.** Recovery after an airplane-mode outage
-  worked, but the intermediate text was not seen.
+- **"Reconnecting (n/5)" text.** `AppShell` now renders `SessionState.error`
+  in a shell banner during reconnect; still check it by eye during a drop.
 - **Feed cursor replay.** No event was missed during the tests. Done
   when an event that arrives during a feed outage shows up after the
   feed resumes, without a manual refresh.
 
 ## Cleanup
 
-- **Remove `TowerConnection.connectLocal`.** It is a test-only
-  constructor. The throwaway test harnesses that used it are deleted.
-
+- **Done: `TowerConnection.connectLocal`.** Removed the unused test-only
+  constructor and made `TowerConnection.ssh` non-nullable.
 ## Gaps to decide
 
-- **Tests.** The suite has 4 tests (boot and the SSE parser). The feed
+- **Tests.** The suite has 5 tests (shell boot, host switcher, and the SSE
+  parser). The feed
   retry and pause logic and the session recovery loop have no automated
   test. Add them if the connection layer changes again.
 - **Multiple machines.** Switching between machines is in the app, but
@@ -76,11 +74,19 @@ never ran, because that server had no agents and no agent-sent messages.
   setting (`autoTheming`), uses Android wallpaper colors
   (`dynamicColoring`, from `dynamic_color`), and falls back to a blue-grey
   seed. The app draws under the system bars.
-- **Done: components.** `M3EAppBar.top`, `M3ENavigationBar`, `M3EButton`
-  and `M3ELoadingIndicator` replace the stock widgets. The text buttons,
-  tiles, sheets, dialogs and inputs are still stock Material.
-- **Open: more Expressive widgets.** Candidates are M3E lists and cards
-  for the Fleet, Jobs and Inbox rows, M3E dialogs and bottom sheets for
-  the action sheets, and M3E text fields.
-- **Open: nav bar width.** On the Pixel 7 the "Workflows" label nearly
-  touches the screen edge. Check a smaller size or shorter label.
+- **Done: components and surfaces.** `M3EAppBar.top`, `M3ENavigationBar`
+  (with native `badgeCount`), `M3EList`, `M3EListItem`, `M3ECard`,
+  `M3EExtendedFab`, `M3EIconButton`, `M3EButton`, and `M3ELoadingIndicator`
+  render the screens. Semantic status pills harmonize with the active
+  dynamic color scheme via `Color.harmonizeWith`. Modal sheets and detail
+  views pad above the Android gesture bar.
+- **Done: navigation and action UX.** Host switching moved from a fifth
+  bottom tab into an app-bar pill and modal sheet. That leaves four roomy
+  tabs (`Fleet`, `Inbox`, `Jobs`, `Workflows`) and fixes the cramped
+  `"Workflows"` label. Boot auto-connects the active key-bootstrapped host.
+  Job actions stay on `JobDetailScreen` and refresh in place. Starting a
+  workflow opens `RunDetailScreen`. Destructive confirms (cancel job,
+  cancel run, dismiss message, remove host) use two presses with a 3-second
+  reset.
+- **Open: M3E form inputs and dialogs.** Text fields, dropdowns, and
+  dialogs still use stock Material widgets.

@@ -1,5 +1,6 @@
-/// Workflows screen: definitions and recent runs, live from
-/// `GET /v1/workflows` and `GET /v1/runs`.
+/// Workflows screen: definitions and recent runs in segmented M3E cards,
+/// live from `GET /v1/workflows` and `GET /v1/runs`. Starting a workflow
+/// opens its live [RunDetailScreen] immediately.
 library;
 
 import 'package:material_3_expressive/material_3_expressive.dart';
@@ -29,6 +30,27 @@ class WorkflowsScreen extends StatelessWidget {
   final TowerClient client;
   final LiveFeed feed;
 
+  Future<void> _startWorkflow(BuildContext context, Workflow w) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final run = await showTypedSheet<WorkflowRun>(
+      context,
+      RunWorkflowSheet(client: client, workflow: w),
+    );
+    if (run == null || !context.mounted) return;
+    messenger.showSnackBar(
+      SnackBar(content: Text('Started ${w.name} (${run.state.name})')),
+    );
+    await openPage(
+      context,
+      RunDetailScreen(
+        client: client,
+        feed: feed,
+        runId: run.id,
+        title: run.workflowName,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => LiveResource<WorkflowsData>(
     feed: feed,
@@ -38,101 +60,82 @@ class WorkflowsScreen extends StatelessWidget {
       workflows.sort((a, b) => a.name.compareTo(b.name));
       return WorkflowsData(workflows, runs.take(_runsShown).toList());
     },
-    builder: (context, data) => ListView(
-      children: [
-        const _Header('Workflows'),
-        if (data.workflows.isEmpty)
-          const ListTile(title: Text('No workflows.'))
-        else
-          for (final w in data.workflows)
-            _WorkflowTile(
-              w,
-              onTap: () => showActionSheet(
-                context,
-                RunWorkflowSheet(client: client, workflow: w),
+    builder: (context, data) {
+      final scheme = Theme.of(context).colorScheme;
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          SectionHeader('Workflows (${data.workflows.length})'),
+          if (data.workflows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                'No workflows defined on this host.',
+                style: TextStyle(color: scheme.onSurfaceVariant),
               ),
+            )
+          else
+            SegmentedCardList(
+              itemCount: data.workflows.length,
+              itemBuilder: (context, i) {
+                final w = data.workflows[i];
+                final active = w.openRuns > 0;
+                final tone = !w.enabled
+                    ? StatusTone.neutral
+                    : (active ? StatusTone.active : StatusTone.positive);
+                return M3EListItem(
+                  leading: StatusLeadingDot(tone),
+                  headline: w.name,
+                  supportingText: w.description,
+                  trailing: !w.enabled
+                      ? const StatePill('disabled', StatusTone.neutral)
+                      : (active
+                            ? StatePill('${w.openRuns} running', tone)
+                            : const Icon(Icons.play_arrow_rounded)),
+                  onTap: () => _startWorkflow(context, w),
+                );
+              },
             ),
-        const _Header('Recent runs'),
-        if (data.runs.isEmpty)
-          const ListTile(title: Text('No runs yet.'))
-        else
-          for (final r in data.runs)
-            _RunTile(
-              r,
-              onTap: () => openPage(
-                context,
-                RunDetailScreen(
-                  client: client,
-                  feed: feed,
-                  runId: r.id,
-                  title: r.workflowName,
-                ),
+          SectionHeader('Recent runs (${data.runs.length})'),
+          if (data.runs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                'No runs yet.',
+                style: TextStyle(color: scheme.onSurfaceVariant),
               ),
+            )
+          else
+            SegmentedCardList(
+              itemCount: data.runs.length,
+              itemBuilder: (context, i) {
+                final r = data.runs[i];
+                final tone = runStateTone(r.state);
+                return M3EListItem(
+                  leading: StatusLeadingDot(tone),
+                  headline: r.workflowName,
+                  supportingText: [timeAgo(r.createdAt), ?r.error].join(' · '),
+                  trailing: StatePill(r.state.name, tone),
+                  onTap: () => openPage(
+                    context,
+                    RunDetailScreen(
+                      client: client,
+                      feed: feed,
+                      runId: r.id,
+                      title: r.workflowName,
+                    ),
+                  ),
+                );
+              },
             ),
-      ],
-    ),
+        ],
+      );
+    },
   );
 }
 
-class _Header extends StatelessWidget {
-  const _Header(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-    child: Text(text, style: Theme.of(context).textTheme.titleSmall),
-  );
-}
-
-class _WorkflowTile extends StatelessWidget {
-  const _WorkflowTile(this.workflow, {required this.onTap});
-
-  final Workflow workflow;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-    onTap: onTap,
-    title: Text(workflow.name),
-    subtitle: workflow.description == null
-        ? null
-        : Text(
-            workflow.description!,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-    trailing: workflow.enabled
-        ? (workflow.openRuns > 0
-              ? StatePill('${workflow.openRuns} running', Colors.blue)
-              : null)
-        : const StatePill('disabled', Colors.grey),
-  );
-}
-
-class _RunTile extends StatelessWidget {
-  const _RunTile(this.run, {required this.onTap});
-
-  final WorkflowRun run;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => ListTile(
-    onTap: onTap,
-    title: Text(run.workflowName),
-    subtitle: Text(
-      [timeAgo(run.createdAt), ?run.error].join(' · '),
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-    ),
-    trailing: StatePill(run.state.name, runStateColor(run.state)),
-  );
-}
-
-/// Start a run: `POST /v1/workflows/{name}/runs`. The inputs come from
-/// the workflow definition (`GET /v1/workflows/{name}`); required ones
-/// must be filled.
+/// Start a run: `POST /v1/workflows/{name}/runs`. Pops with the created
+/// [WorkflowRun] so the caller can navigate straight to [RunDetailScreen].
 class RunWorkflowSheet extends StatefulWidget {
   const RunWorkflowSheet({
     super.key,
@@ -161,7 +164,7 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
     super.dispose();
   }
 
-  void _start(List<WorkflowInputSpec> specs) {
+  Future<void> _start(List<WorkflowInputSpec> specs) async {
     final input = <String, String>{};
     for (final s in specs) {
       final v = _fields[s.name]?.text.trim() ?? '';
@@ -174,10 +177,20 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
         input[s.name] = v;
       }
     }
-    perform(() async {
-      final run = await widget.client.runWorkflow(widget.workflow.name, input);
-      return 'Started ${widget.workflow.name} (${run.state.name})';
+    setState(() {
+      busy = true;
+      error = null;
     });
+    try {
+      final run = await widget.client.runWorkflow(widget.workflow.name, input);
+      if (mounted) Navigator.of(context).pop(run);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        busy = false;
+        error = describeError(e);
+      });
+    }
   }
 
   @override
@@ -186,7 +199,8 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
     builder: (context, snap) {
       final title = Text(
         'Run ${widget.workflow.name}',
-        style: Theme.of(context).textTheme.titleMedium,
+        style: Theme.of(context).textTheme.titleMedium
+            ?.copyWith(fontWeight: FontWeight.w600),
       );
       if (snap.hasError) {
         return Column(
@@ -215,10 +229,19 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
           if (!widget.workflow.enabled)
             const Padding(
               padding: EdgeInsets.only(top: 8),
-              child: Text('This workflow is disabled.'),
+              child: StatePill('disabled', StatusTone.neutral),
             ),
           const SizedBox(height: 12),
-          if (specs.isEmpty) const Text('This workflow takes no inputs.'),
+          if (specs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                'This workflow takes no inputs.',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           for (final s in specs)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -238,11 +261,12 @@ class _RunWorkflowSheetState extends State<RunWorkflowSheet> with ActionState {
           errorStrip(),
           Align(
             alignment: Alignment.centerRight,
-            child: M3EButton(
+            child: M3EButton.icon(
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
               onPressed: busy || !widget.workflow.enabled
                   ? null
                   : () => _start(specs),
-              child: Text(busy ? 'Starting…' : 'Run'),
+              label: Text(busy ? 'Starting…' : 'Run workflow'),
             ),
           ),
         ],

@@ -3,6 +3,8 @@
 /// answer, approve, deny or dismiss it.
 library;
 
+import 'dart:async';
+
 import 'package:material_3_expressive/material_3_expressive.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -24,6 +26,21 @@ class InboxData {
 String _textOf(Message m) =>
     m.parts.map((p) => p.text).whereType<String>().join('\n').trim();
 
+({String label, StatusTone tone}) _deadlineBadge(int dueMs) {
+  final left = DateTime.fromMillisecondsSinceEpoch(dueMs)
+      .difference(DateTime.now());
+  if (left.isNegative) {
+    return (label: 'overdue', tone: StatusTone.danger);
+  }
+  if (left.inMinutes < 15) {
+    return (label: 'due ${left.inMinutes}m', tone: StatusTone.warning);
+  }
+  if (left.inMinutes < 60) {
+    return (label: 'due ${left.inMinutes}m', tone: StatusTone.neutral);
+  }
+  return (label: 'due ${left.inHours}h', tone: StatusTone.neutral);
+}
+
 class InboxScreen extends StatelessWidget {
   const InboxScreen({super.key, required this.client, required this.feed});
 
@@ -39,76 +56,71 @@ class InboxScreen extends StatelessWidget {
       messages.sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return InboxData(messages, {for (final a in agents) a.id: a.name});
     },
-    builder: (context, data) => ListView(
-      children: data.messages.isEmpty
-          ? emptyRow('Inbox is empty.')
-          : [
-              for (final m in data.messages)
-                _MessageTile(
-                  m,
-                  data.agentNames,
-                  onTap: () => showActionSheet(
-                    context,
-                    RespondSheet(
-                      client: client,
-                      message: m,
-                      from: data.agentNames[m.fromId] ?? m.fromId,
-                    ),
+    builder: (context, data) {
+      if (data.messages.isEmpty) {
+        return ListView(
+          children: emptyRow(
+            'Inbox is clear',
+            icon: Icons.inbox_rounded,
+            subtitle:
+                'Questions and approval requests from agents appear here.',
+          ),
+        );
+      }
+      return ListView(
+        padding: const EdgeInsets.only(bottom: 24),
+        children: [
+          SectionHeader('Pending (${data.messages.length})'),
+          SegmentedCardList(
+            itemCount: data.messages.length,
+            itemBuilder: (context, i) {
+              final m = data.messages[i];
+              final text = _textOf(m);
+              final from = data.agentNames[m.fromId] ?? m.fromId;
+              final isApproval = m.kind == MessageKind.approval;
+              final tone = isApproval ? StatusTone.warning : StatusTone.active;
+              final colors = resolveStatusColors(context, tone);
+              final due = m.deadlineAt == null
+                  ? null
+                  : _deadlineBadge(m.deadlineAt!);
+              return M3EListItem(
+                leading: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: colors.container,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    isApproval
+                        ? Icons.verified_user_outlined
+                        : Icons.help_outline_rounded,
+                    size: 18,
+                    color: colors.onContainer,
                   ),
                 ),
-            ],
-    ),
+                overline:
+                    '${m.kind.name.toUpperCase()} · $from · '
+                    '${timeAgo(m.createdAt)}',
+                headline: text.isEmpty ? '(no text)' : text,
+                trailing: due == null ? null : StatePill(due.label, due.tone),
+                onTap: () => showActionSheet(
+                  context,
+                  RespondSheet(client: client, message: m, from: from),
+                ),
+              );
+            },
+          ),
+        ],
+      );
+    },
   );
-}
-
-class _MessageTile extends StatelessWidget {
-  const _MessageTile(this.message, this.names, {required this.onTap});
-
-  final Message message;
-  final Map<String, String> names;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = _textOf(message);
-    final from = names[message.fromId] ?? message.fromId;
-    final due = message.deadlineAt;
-    return ListTile(
-      onTap: onTap,
-      leading: Icon(
-        message.kind == MessageKind.approval
-            ? Icons.verified_user_outlined
-            : Icons.help_outline,
-      ),
-      title: Text(
-        text.isEmpty ? '(no text)' : text,
-        maxLines: 3,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        [
-          message.kind.name,
-          'from $from',
-          timeAgo(message.createdAt),
-          if (due != null) _deadline(due),
-        ].join(' · '),
-      ),
-      isThreeLine: true,
-    );
-  }
-
-  static String _deadline(int dueMs) {
-    final left = DateTime.fromMillisecondsSinceEpoch(dueMs)
-        .difference(DateTime.now());
-    if (left.isNegative) return 'overdue';
-    if (left.inMinutes < 60) return 'due in ${left.inMinutes}m';
-    return 'due in ${left.inHours}h';
-  }
 }
 
 /// Respond to one message. Approvals get Approve / Deny
 /// (`POST /v1/messages/{id}/respond` with `approve`); anything else gets
-/// a text answer. Dismiss closes the message without an answer.
+/// a text answer. Dismiss requires two presses so a stray tap never drops
+/// an agent's question.
 class RespondSheet extends StatefulWidget {
   const RespondSheet({
     super.key,
@@ -127,11 +139,14 @@ class RespondSheet extends StatefulWidget {
 
 class _RespondSheetState extends State<RespondSheet> with ActionState {
   final _answer = TextEditingController();
+  var _confirmDismiss = false;
+  Timer? _dismissReset;
 
   bool get _isApproval => widget.message.kind == MessageKind.approval;
 
   @override
   void dispose() {
+    _dismissReset?.cancel();
     _answer.dispose();
     super.dispose();
   }
@@ -143,33 +158,67 @@ class _RespondSheetState extends State<RespondSheet> with ActionState {
 
   void _answerText() {
     final text = _answer.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty) {
+      setState(() => error = 'Enter an answer first.');
+      return;
+    }
     perform(() async {
       await widget.client.respond(widget.message.id, answer: text);
       return 'Answer sent to ${widget.from}';
     });
   }
 
-  void _dismiss() => perform(() async {
-    await widget.client.dismiss(widget.message.id);
-    return 'Dismissed';
-  });
+  void _dismiss() {
+    if (!_confirmDismiss) {
+      _dismissReset?.cancel();
+      setState(() => _confirmDismiss = true);
+      _dismissReset = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _confirmDismiss = false);
+      });
+      return;
+    }
+    _dismissReset?.cancel();
+    perform(() async {
+      await widget.client.dismiss(widget.message.id);
+      return 'Dismissed';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final text = _textOf(widget.message);
+    final scheme = Theme.of(context).colorScheme;
+    final due = widget.message.deadlineAt == null
+        ? null
+        : _deadlineBadge(widget.message.deadlineAt!);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          '${_isApproval ? 'Approval' : 'Question'} from ${widget.from}',
-          style: Theme.of(context).textTheme.titleMedium,
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '${_isApproval ? 'Approval' : 'Question'} from ${widget.from}',
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (due != null) StatePill(due.label, due.tone),
+          ],
         ),
-        const SizedBox(height: 8),
-        Text(text.isEmpty ? '(no text)' : text),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: SelectableText(text.isEmpty ? '(no text)' : text),
+        ),
         const SizedBox(height: 12),
-        if (!_isApproval)
+        if (!_isApproval) ...[
           TextField(
             controller: _answer,
             autofocus: true,
@@ -182,17 +231,22 @@ class _RespondSheetState extends State<RespondSheet> with ActionState {
               border: OutlineInputBorder(),
             ),
           ),
-        if (!_isApproval) const SizedBox(height: 12),
+          const SizedBox(height: 12),
+        ],
         errorStrip(),
         Row(
           children: [
             TextButton(
+              style: _confirmDismiss
+                  ? TextButton.styleFrom(foregroundColor: scheme.error)
+                  : null,
               onPressed: busy ? null : _dismiss,
-              child: const Text('Dismiss'),
+              child: Text(_confirmDismiss ? 'Tap again to dismiss' : 'Dismiss'),
             ),
             const Spacer(),
             if (_isApproval) ...[
-              OutlinedButton(
+              M3EButton(
+                style: M3EButtonStyle.outlined,
                 onPressed: busy ? null : () => _approve(false),
                 child: const Text('Deny'),
               ),
@@ -202,9 +256,10 @@ class _RespondSheetState extends State<RespondSheet> with ActionState {
                 child: const Text('Approve'),
               ),
             ] else
-              M3EButton(
+              M3EButton.icon(
+                icon: const Icon(Icons.send_rounded, size: 18),
                 onPressed: busy ? null : _answerText,
-                child: Text(busy ? 'Sending…' : 'Send'),
+                label: Text(busy ? 'Sending…' : 'Send'),
               ),
           ],
         ),

@@ -1,6 +1,6 @@
 /// Jobs screen: the open queue and the most recent closed jobs, live
-/// from `GET /v1/tasks`. The button queues a job; tapping a job opens
-/// its detail page (trail, assign, release, cancel).
+/// from `GET /v1/tasks`. The extended FAB queues a job; tapping a job
+/// opens its detail page.
 library;
 
 import 'package:material_3_expressive/material_3_expressive.dart';
@@ -15,6 +15,18 @@ import 'job_detail_screen.dart';
 
 /// How many closed jobs to show under the queue (herdr shows ten).
 const _closedShown = 10;
+
+StatusTone taskStateTone(TaskState s) => switch (s) {
+  TaskState.queued || TaskState.canceled => StatusTone.neutral,
+  TaskState.assigned || TaskState.working => StatusTone.active,
+  TaskState.inputRequired => StatusTone.warning,
+  TaskState.completed => StatusTone.positive,
+  TaskState.failed || TaskState.rejected => StatusTone.danger,
+};
+
+/// `Reserved` explanation from an assign or create response, if any.
+String waitingNote(WaitingInfo w) =>
+    w.reason.isEmpty ? '' : ' - waiting: ${w.reason}';
 
 class JobsData {
   const JobsData(this.open, this.closed, this.agents);
@@ -48,98 +60,79 @@ class JobsScreen extends StatelessWidget {
       agents.sort((a, b) => a.name.compareTo(b.name));
       return JobsData(open, closed.take(_closedShown).toList(), agents);
     },
-    builder: (context, data) => Scaffold(
-      backgroundColor: Colors.transparent,
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => showActionSheet(
-          context,
-          QueueJobSheet(client: client, agents: data.agents),
+    builder: (context, data) {
+      final scheme = Theme.of(context).colorScheme;
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        floatingActionButton: M3EExtendedFab(
+          label: 'Queue job',
+          icon: const Icon(Icons.add_rounded),
+          onPressed: () => showActionSheet(
+            context,
+            QueueJobSheet(client: client, agents: data.agents),
+          ),
         ),
-        icon: const Icon(Icons.add),
-        label: const Text('Queue job'),
-      ),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 88),
-        children: [
-          _Header('Queue (${data.open.length})'),
-          if (data.open.isEmpty)
-            const ListTile(title: Text('No open jobs.'))
-          else
-            for (final t in data.open) _tile(context, t, data),
-          if (data.closed.isNotEmpty) ...[
-            const _Header('Recently closed'),
-            for (final t in data.closed) _tile(context, t, data),
+        body: ListView(
+          padding: const EdgeInsets.only(bottom: 96),
+          children: [
+            SectionHeader('Queue (${data.open.length})'),
+            if (data.open.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 8,
+                ),
+                child: Text(
+                  'No open jobs in the queue.',
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              )
+            else
+              SegmentedCardList(
+                itemCount: data.open.length,
+                itemBuilder: (context, i) =>
+                    _buildItem(context, data.open[i], data.agentNames),
+              ),
+            if (data.closed.isNotEmpty) ...[
+              const SectionHeader('Recently closed'),
+              SegmentedCardList(
+                itemCount: data.closed.length,
+                itemBuilder: (context, i) =>
+                    _buildItem(context, data.closed[i], data.agentNames),
+              ),
+            ],
           ],
-        ],
-      ),
-    ),
+        ),
+      );
+    },
   );
 
-  Widget _tile(BuildContext context, Task t, JobsData data) => _TaskTile(
-    t,
-    data.agentNames,
-    onTap: () => openPage(
-      context,
-      JobDetailScreen(client: client, feed: feed, taskId: t.id),
-    ),
-  );
-}
-
-class _Header extends StatelessWidget {
-  const _Header(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-    child: Text(text, style: Theme.of(context).textTheme.titleSmall),
-  );
-}
-
-class _TaskTile extends StatelessWidget {
-  const _TaskTile(this.task, this.names, {required this.onTap});
-
-  final Task task;
-  final Map<String, String> names;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildItem(
+    BuildContext context,
+    Task task,
+    Map<String, String> names,
+  ) {
     final owner = task.agentId == null
         ? null
         : names[task.agentId] ?? task.agentId;
-    return ListTile(
-      onTap: onTap,
-      title: Text(task.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        [
-          'p${task.priority}',
-          ?owner,
-          ...task.tags,
-          timeAgo(task.updatedAt),
-        ].join(' · '),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
+    final tone = taskStateTone(task.state);
+    return M3EListItem(
+      leading: StatusLeadingDot(tone),
+      headline: task.title,
+      supportingText: [
+        'p${task.priority}',
+        ?owner,
+        ...task.tags,
+        timeAgo(task.updatedAt),
+      ].join(' · '),
+      trailing: StatePill(task.state.name, tone),
+      onTap: () => openPage(
+        context,
+        JobDetailScreen(client: client, feed: feed, taskId: task.id),
       ),
-      trailing: StatePill(task.state.name, taskStateColor(task.state)),
     );
   }
 }
-
-Color taskStateColor(TaskState s) => switch (s) {
-  TaskState.queued => Colors.grey,
-  TaskState.assigned => Colors.teal,
-  TaskState.working => Colors.blue,
-  TaskState.inputRequired => Colors.orange,
-  TaskState.completed => Colors.green,
-  TaskState.failed || TaskState.rejected => Colors.red,
-  TaskState.canceled => Colors.blueGrey,
-};
-
-/// `Reserved` explanation from an assign or create response, if any.
-String waitingNote(WaitingInfo w) =>
-    w.reason.isEmpty ? '' : ' - waiting: ${w.reason}';
 
 /// Queue a job: `POST /v1/tasks`, optionally pre-assigned to an agent.
 class QueueJobSheet extends StatefulWidget {
@@ -198,7 +191,11 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
-      Text('Queue a job', style: Theme.of(context).textTheme.titleMedium),
+      Text(
+        'Queue a job',
+        style: Theme.of(context).textTheme.titleMedium
+            ?.copyWith(fontWeight: FontWeight.w600),
+      ),
       const SizedBox(height: 12),
       TextField(
         controller: _title,
@@ -232,6 +229,7 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
                 labelText: 'Priority',
+                hintText: '0',
                 border: OutlineInputBorder(),
               ),
             ),
@@ -251,7 +249,10 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
                 for (final a in widget.agents)
                   DropdownMenuItem(
                     value: a.name,
-                    child: Text(a.name, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      '${a.name} (${a.state.name})',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
               onChanged: busy ? null : (v) => setState(() => _assign = v),
@@ -263,9 +264,10 @@ class _QueueJobSheetState extends State<QueueJobSheet> with ActionState {
       errorStrip(),
       Align(
         alignment: Alignment.centerRight,
-        child: M3EButton(
+        child: M3EButton.icon(
+          icon: const Icon(Icons.add_task_rounded, size: 18),
           onPressed: busy ? null : _submit,
-          child: Text(busy ? 'Queuing…' : 'Queue'),
+          label: Text(busy ? 'Queuing…' : 'Queue'),
         ),
       ),
     ],

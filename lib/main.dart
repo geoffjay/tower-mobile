@@ -1,6 +1,8 @@
 /// App entry: wires the registry, session controller, and screens.
 library;
 
+import 'dart:async';
+
 import 'package:material_3_expressive/material_3_expressive.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -12,7 +14,8 @@ void main() {
   runApp(const TowerMobileApp());
 }
 
-/// Root widget. Loads the registry, then shows the shell.
+/// Root widget. Loads the registry, auto-connects a key-bootstrapped active
+/// host, and renders the shell.
 class TowerMobileApp extends StatefulWidget {
   const TowerMobileApp({super.key});
 
@@ -33,6 +36,26 @@ class _TowerMobileAppState extends State<TowerMobileApp> {
   Future<void> _boot() async {
     final registry = await MachineRegistry.create();
     final session = SessionController(registry);
+    final machines = registry.machines();
+    final activeId = registry.activeMachineId();
+    StoredMachine? target;
+    if (activeId != null) {
+      for (final m in machines) {
+        if (m.id == activeId) {
+          target = m;
+          break;
+        }
+      }
+    } else if (machines.length == 1) {
+      target = machines.first;
+    }
+    if (target != null && target.keyBootstrapped) {
+      unawaited(session.connect(target));
+    }
+    if (!mounted) {
+      session.dispose();
+      return;
+    }
     setState(() {
       _registry = registry;
       _session = session;

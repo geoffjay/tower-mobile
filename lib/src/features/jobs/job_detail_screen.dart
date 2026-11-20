@@ -1,6 +1,8 @@
-/// Job detail: facts, result, the event trail, and the job's actions
-/// (assign, release, cancel).
+/// Job detail: facts in an Expressive card, result, in-place actions
+/// (assign, release, cancel), and the event trail in a segmented card list.
 library;
+
+import 'dart:async';
 
 import 'package:material_3_expressive/material_3_expressive.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,7 +12,7 @@ import '../../api/models.dart';
 import '../../api/tower_client.dart';
 import '../common/actions.dart';
 import '../common/live_resource.dart';
-import 'jobs_screen.dart' show taskStateColor, waitingNote;
+import 'jobs_screen.dart' show taskStateTone, waitingNote;
 
 class _JobView {
   const _JobView(this.detail, this.agents);
@@ -32,79 +34,110 @@ class JobDetailScreen extends StatelessWidget {
   final String taskId;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: M3EAppBar.top(
-      automaticallyImplyLeading: true,
-      title: const Text('Job'),
-    ),
-    body: LiveResource<_JobView>(
-      feed: feed,
-      kinds: const ['task.'],
-      load: () async {
-        final (detail, agents) = await (
-          client.task(taskId),
-          client.agents(),
-        ).wait;
-        agents.sort((a, b) => a.name.compareTo(b.name));
-        return _JobView(detail, agents);
-      },
-      builder: (context, view) {
-        final t = view.detail.task;
-        final names = {for (final a in view.agents) a.id: a.name};
-        final owner = t.ownerId == null ? null : names[t.ownerId] ?? t.ownerId;
-        return ListView(
-          padding: const EdgeInsets.only(bottom: 32),
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text(
-                t.title,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: StatePill(t.state.name, taskStateColor(t.state)),
-              ),
-            ),
-            InfoRow('Priority', '${t.priority}'),
-            if (owner != null) InfoRow('Owner', owner),
-            if (t.tags.isNotEmpty) InfoRow('Tags', t.tags.join(', ')),
-            InfoRow('Attempts', '${t.attemptCount} of ${t.maxAttempts}'),
-            InfoRow('Created', timeAgo(t.createdAt)),
-            InfoRow('Updated', timeAgo(t.updatedAt)),
-            if (t.description != null && t.description!.isNotEmpty) ...[
-              const SectionHeader('Description'),
+  Widget build(BuildContext context) {
+    final bottomSafe = MediaQuery.of(context).viewPadding.bottom;
+    return Scaffold(
+      appBar: M3EAppBar.top(
+        automaticallyImplyLeading: true,
+        title: const Text('Job'),
+      ),
+      body: LiveResource<_JobView>(
+        feed: feed,
+        kinds: const ['task.'],
+        load: () async {
+          final (detail, agents) = await (
+            client.task(taskId),
+            client.agents(),
+          ).wait;
+          agents.sort((a, b) => a.name.compareTo(b.name));
+          return _JobView(detail, agents);
+        },
+        refreshableBuilder: (context, view, refresh) {
+          final t = view.detail.task;
+          final names = {for (final a in view.agents) a.id: a.name};
+          final owner = t.ownerId == null
+              ? null
+              : names[t.ownerId] ?? t.ownerId;
+          final scheme = Theme.of(context).colorScheme;
+          return ListView(
+            padding: EdgeInsets.only(bottom: 32 + bottomSafe),
+            children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SelectableText(t.description!),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
+                child: Text(
+                  t.title,
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
               ),
-            ],
-            if (t.result != null) ...[
-              const SectionHeader('Result'),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SelectableText(t.result!),
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: StatePill(
+                    t.state.name,
+                    taskStateTone(t.state),
+                    showDot: true,
+                  ),
+                ),
               ),
+              InfoCard(
+                children: [
+                  InfoRow('Priority', 'p${t.priority}'),
+                  if (owner != null) InfoRow('Owner', owner),
+                  if (t.tags.isNotEmpty) InfoRow('Tags', t.tags.join(', ')),
+                  InfoRow('Attempts', '${t.attemptCount} of ${t.maxAttempts}'),
+                  InfoRow('Created', timeAgo(t.createdAt)),
+                  InfoRow('Updated', timeAgo(t.updatedAt)),
+                ],
+              ),
+              if (t.description != null && t.description!.isNotEmpty) ...[
+                const SectionHeader('Description'),
+                ContentCard(t.description!),
+              ],
+              if (t.result != null) ...[
+                const SectionHeader('Result'),
+                ContentCard(t.result!),
+              ],
+              if (t.state.isOpen) ...[
+                const SectionHeader('Actions'),
+                InfoCard(
+                  children: [
+                    _JobActions(
+                      client: client,
+                      task: t,
+                      agents: view.agents,
+                      onMutated: refresh,
+                    ),
+                  ],
+                ),
+              ],
+              SectionHeader('Trail (${view.detail.trail.length})'),
+              if (view.detail.trail.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    'No events recorded yet.',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                )
+              else
+                SegmentedCardList(
+                  itemCount: view.detail.trail.length,
+                  itemBuilder: (context, i) {
+                    final e = view.detail.trail[i];
+                    return M3EListItem(
+                      headline: _describe(e, names),
+                      supportingText: timeAgo(e.ts),
+                    );
+                  },
+                ),
             ],
-            const SectionHeader('Actions'),
-            _JobActions(client: client, task: t, agents: view.agents),
-            SectionHeader('Trail (${view.detail.trail.length})'),
-            if (view.detail.trail.isEmpty)
-              const ListTile(title: Text('No events yet.')),
-            for (final e in view.detail.trail)
-              ListTile(
-                dense: true,
-                title: Text(_describe(e, names)),
-                subtitle: Text(timeAgo(e.ts)),
-              ),
-          ],
-        );
-      },
-    ),
-  );
+          );
+        },
+      ),
+    );
+  }
 
   /// One line for a trail event: `created`, `→ canceled`,
   /// `→ queued · released_by dev-pm`, and so on.
@@ -127,18 +160,21 @@ class JobDetailScreen extends StatelessWidget {
   }
 }
 
-/// Assign (`/assign`), release (`/release`) and cancel (`/cancel`, two
-/// presses). Only the actions that fit the job's state are offered.
+/// In-place assign (`/assign`), release (`/release`) and cancel (`/cancel`,
+/// two presses with 3s auto-reset). Keeps the detail page open so the
+/// operator sees the updated state and trail immediately.
 class _JobActions extends StatefulWidget {
   const _JobActions({
     required this.client,
     required this.task,
     required this.agents,
+    required this.onMutated,
   });
 
   final TowerClient client;
   final Task task;
   final List<Agent> agents;
+  final Future<void> Function() onMutated;
 
   @override
   State<_JobActions> createState() => _JobActionsState();
@@ -147,6 +183,7 @@ class _JobActions extends StatefulWidget {
 class _JobActionsState extends State<_JobActions> with ActionState {
   String? _agent;
   var _confirmCancel = false;
+  Timer? _cancelReset;
 
   Task get _task => widget.task;
 
@@ -158,44 +195,51 @@ class _JobActionsState extends State<_JobActions> with ActionState {
           _task.state == TaskState.working ||
           _task.state == TaskState.inputRequired);
 
+  @override
+  void dispose() {
+    _cancelReset?.cancel();
+    super.dispose();
+  }
+
   void _assign() {
     final agent = _agent;
     if (agent == null) {
       setState(() => error = 'Pick an agent first.');
       return;
     }
-    perform(() async {
+    performInline(() async {
       final r = await widget.client.assignTask(_task.id, agent);
       return 'Job ${r.task.state.name} for $agent${waitingNote(r.waiting)}';
-    });
+    }, onSuccess: widget.onMutated);
   }
 
-  void _release() => perform(() async {
+  void _release() => performInline(() async {
     await widget.client.releaseTask(_task.id, owner: _task.ownerId!);
     return 'Job released to the queue';
-  });
+  }, onSuccess: widget.onMutated);
 
   void _cancel() {
     if (!_confirmCancel) {
+      _cancelReset?.cancel();
       setState(() => _confirmCancel = true);
+      _cancelReset = Timer(const Duration(seconds: 3), () {
+        if (mounted) setState(() => _confirmCancel = false);
+      });
       return;
     }
-    perform(() async {
+    _cancelReset?.cancel();
+    setState(() => _confirmCancel = false);
+    performInline(() async {
       await widget.client.cancelTask(_task.id);
       return 'Job canceled';
-    });
+    }, onSuccess: widget.onMutated);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_task.state.isOpen) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16),
-        child: Text('This job is closed; no actions apply.'),
-      );
-    }
+    final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -236,16 +280,22 @@ class _JobActionsState extends State<_JobActions> with ActionState {
           Row(
             children: [
               if (_canRelease)
-                OutlinedButton(
+                M3EButton(
+                  style: M3EButtonStyle.outlined,
                   onPressed: busy ? null : _release,
                   child: const Text('Release'),
                 ),
               const Spacer(),
               M3EButton(
-                style: M3EButtonStyle.tonal,
+                style: _confirmCancel
+                    ? M3EButtonStyle.filled
+                    : M3EButtonStyle.tonal,
                 decoration: M3EButtonDecoration(
+                  backgroundColor: _confirmCancel
+                      ? WidgetStatePropertyAll(scheme.error)
+                      : WidgetStatePropertyAll(scheme.errorContainer),
                   foregroundColor: WidgetStatePropertyAll(
-                    Theme.of(context).colorScheme.error,
+                    _confirmCancel ? scheme.onError : scheme.onErrorContainer,
                   ),
                 ),
                 onPressed: busy ? null : _cancel,

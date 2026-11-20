@@ -1,5 +1,6 @@
-/// App shell: navigation between the five screens, with the machine
-/// switcher in the app bar.
+/// App shell: 4-tab operational navigation (Fleet, Inbox, Jobs, Workflows)
+/// with an interactive host switcher pill in the app bar and a live
+/// connection/recovery banner.
 library;
 
 import 'dart:async';
@@ -12,17 +13,18 @@ import '../../api/models.dart';
 import '../../api/tower_client.dart';
 import '../../connection/registry.dart';
 import '../../connection/session.dart';
+import '../common/live_resource.dart';
 import '../fleet/fleet_screen.dart';
 import '../inbox/inbox_screen.dart';
 import '../jobs/jobs_screen.dart';
 import '../machines/machines_screen.dart';
 import '../workflows/workflows_screen.dart';
 
-/// The visible screen, in navigation order.
-enum AppTab { machines, fleet, inbox, jobs, workflows }
+/// Primary operational screens in bottom-navigation order.
+enum AppTab { fleet, inbox, jobs, workflows }
 
-/// Scaffold with bottom navigation; the active machine's session drives
-/// the action screens.
+/// Scaffold with M3 Expressive navigation, native Inbox badge counter, and
+/// app-bar host switcher.
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.registry, required this.session});
 
@@ -34,17 +36,28 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
-  AppTab _tab = AppTab.machines;
+  AppTab _tab = AppTab.fleet;
+
+  int _inboxCount = 0;
+  LiveFeed? _watchedFeed;
+  TowerClient? _watchedClient;
+  StreamSubscription<SessionState>? _sessionSub;
+  StreamSubscription<TowerEvent>? _feedSub;
+  Timer? _inboxDebounce;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _syncInboxWatcher(widget.session.state);
+    _sessionSub = widget.session.listen(_syncInboxWatcher);
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _sessionSub?.cancel();
+    _detachFeed();
     super.dispose();
   }
 
@@ -63,6 +76,66 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     }
   }
 
+  void _syncInboxWatcher(SessionState state) {
+    final ready = state.phase == SessionPhase.ready;
+    final feed = ready ? state.feed : null;
+    final client = ready ? state.client : null;
+    if (identical(feed, _watchedFeed) && identical(client, _watchedClient)) {
+      return;
+    }
+    _detachFeed();
+    _watchedFeed = feed;
+    _watchedClient = client;
+    if (feed == null || client == null) {
+      if (_inboxCount != 0 && mounted) {
+        setState(() => _inboxCount = 0);
+      }
+      return;
+    }
+    _feedSub = feed.events.listen((e) {
+      if (e.kind.startsWith('message.')) _scheduleInboxRefresh();
+    });
+    feed.status.addListener(_onFeedStatus);
+    _refreshInboxCount();
+  }
+
+  void _detachFeed() {
+    _feedSub?.cancel();
+    _feedSub = null;
+    _inboxDebounce?.cancel();
+    _inboxDebounce = null;
+    _watchedFeed?.status.removeListener(_onFeedStatus);
+    _watchedFeed = null;
+    _watchedClient = null;
+  }
+
+  void _onFeedStatus() {
+    if (_watchedFeed?.status.value == FeedStatus.live) {
+      _scheduleInboxRefresh();
+    }
+  }
+
+  void _scheduleInboxRefresh() {
+    _inboxDebounce?.cancel();
+    _inboxDebounce = Timer(
+      const Duration(milliseconds: 300),
+      _refreshInboxCount,
+    );
+  }
+
+  Future<void> _refreshInboxCount() async {
+    final client = _watchedClient;
+    if (client == null) return;
+    try {
+      final n = (await client.inbox()).length;
+      if (mounted && identical(client, _watchedClient) && n != _inboxCount) {
+        setState(() => _inboxCount = n);
+      }
+    } catch (_) {
+      // The Inbox screen displays errors; the badge keeps its last count.
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
@@ -72,73 +145,81 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
       builder: (context, snapshot) {
         final state = snapshot.data ?? session.state;
         final ready = state.phase == SessionPhase.ready;
+        final content = ready
+            ? switch (_tab) {
+                AppTab.fleet => FleetScreen(
+                  client: state.client!,
+                  feed: state.feed!,
+                ),
+                AppTab.inbox => InboxScreen(
+                  client: state.client!,
+                  feed: state.feed!,
+                ),
+                AppTab.jobs => JobsScreen(
+                  client: state.client!,
+                  feed: state.feed!,
+                ),
+                AppTab.workflows => WorkflowsScreen(
+                  client: state.client!,
+                  feed: state.feed!,
+                ),
+              }
+            : _NotConnectedView(
+                registry: widget.registry,
+                session: session,
+                state: state,
+                onStateChanged: () => setState(() {}),
+              );
         return Scaffold(
           appBar: M3EAppBar.top(
             title: Text(_titleFor(_tab)),
             actions: [
-              if (ready) _FeedIndicator(state.feed!),
-              if (state.machine != null)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12),
-                  child: Center(
-                    child: Text(
-                      state.machine!.name,
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                  ),
+              if (ready) _FeedDropButton(state.feed!),
+              Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: _HostSwitcherChip(
+                  registry: widget.registry,
+                  session: session,
+                  state: state,
+                  onClosed: () => setState(() {}),
                 ),
+              ),
             ],
           ),
-          body: switch (_tab) {
-            AppTab.machines => MachinesScreen(
-              registry: widget.registry,
-              session: session,
-            ),
-            AppTab.fleet =>
-              ready
-                  ? FleetScreen(client: state.client!, feed: state.feed!)
-                  : const _NotConnected(),
-            AppTab.inbox =>
-              ready
-                  ? InboxScreen(client: state.client!, feed: state.feed!)
-                  : const _NotConnected(),
-            AppTab.jobs =>
-              ready
-                  ? JobsScreen(client: state.client!, feed: state.feed!)
-                  : const _NotConnected(),
-            AppTab.workflows =>
-              ready
-                  ? WorkflowsScreen(client: state.client!, feed: state.feed!)
-                  : const _NotConnected(),
-          },
+          body: Column(
+            children: [
+              _SessionStatusBanner(
+                registry: widget.registry,
+                session: session,
+                state: state,
+              ),
+              Expanded(child: content),
+            ],
+          ),
           bottomNavigationBar: M3ENavigationBar(
             selectedIndex: _tab.index,
             onDestinationSelected: (i) =>
                 setState(() => _tab = AppTab.values[i]),
             destinations: [
               const M3ENavigationBarDestination(
-                icon: Icon(Icons.dns_outlined),
-                selectedIcon: Icon(Icons.dns),
-                label: 'Machines',
-              ),
-              const M3ENavigationBarDestination(
-                icon: Icon(Icons.people_outline),
-                selectedIcon: Icon(Icons.people),
+                icon: Icon(Icons.people_outline_rounded),
+                selectedIcon: Icon(Icons.people_rounded),
                 label: 'Fleet',
               ),
               M3ENavigationBarDestination(
-                icon: _InboxIcon(state, selected: false),
-                selectedIcon: _InboxIcon(state, selected: true),
+                icon: const Icon(Icons.inbox_outlined),
+                selectedIcon: const Icon(Icons.inbox_rounded),
                 label: 'Inbox',
+                badgeCount: ready && _inboxCount > 0 ? _inboxCount : null,
               ),
               const M3ENavigationBarDestination(
-                icon: Icon(Icons.work_outline),
-                selectedIcon: Icon(Icons.work),
+                icon: Icon(Icons.work_outline_rounded),
+                selectedIcon: Icon(Icons.work_rounded),
                 label: 'Jobs',
               ),
               const M3ENavigationBarDestination(
                 icon: Icon(Icons.account_tree_outlined),
-                selectedIcon: Icon(Icons.account_tree),
+                selectedIcon: Icon(Icons.account_tree_rounded),
                 label: 'Workflows',
               ),
             ],
@@ -149,7 +230,6 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 
   String _titleFor(AppTab tab) => switch (tab) {
-    AppTab.machines => 'Machines',
     AppTab.fleet => 'Fleet',
     AppTab.inbox => 'Inbox',
     AppTab.jobs => 'Jobs',
@@ -157,120 +237,355 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   };
 }
 
-/// Placeholder shown when an action screen is selected without a ready
-/// session.
-class _NotConnected extends StatelessWidget {
-  const _NotConnected();
+/// Interactive pill in the top app bar showing the active host and live
+/// connection/feed state. Tapping opens the host switcher sheet.
+class _HostSwitcherChip extends StatelessWidget {
+  const _HostSwitcherChip({
+    required this.registry,
+    required this.session,
+    required this.state,
+    required this.onClosed,
+  });
+
+  final MachineRegistry registry;
+  final SessionController session;
+  final SessionState state;
+  final VoidCallback onClosed;
 
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: Text('Connect a machine first (Machines tab).'));
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final machines = registry.machines();
+    final label =
+        state.machine?.name ??
+        (machines.isEmpty ? 'Add host' : machines.first.name);
+    final feed = state.feed;
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(999),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () async {
+          await showMachinesSheet(
+            context,
+            registry: registry,
+            session: session,
+          );
+          onClosed();
+        },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIndicator(context, feed),
+              const SizedBox(width: 7),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w600),
+                ),
+              ),
+              const SizedBox(width: 2),
+              Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIndicator(BuildContext context, LiveFeed? feed) {
+    switch (state.phase) {
+      case SessionPhase.connecting:
+      case SessionPhase.connected:
+        return const SizedBox(
+          width: 12,
+          height: 12,
+          child: M3ELoadingIndicator(),
+        );
+      case SessionPhase.ready:
+        if (feed == null) return _dot(context, StatusTone.positive);
+        return ValueListenableBuilder<FeedStatus>(
+          valueListenable: feed.status,
+          builder: (context, status, _) => _dot(
+            context,
+            status == FeedStatus.live
+                ? StatusTone.positive
+                : StatusTone.warning,
+          ),
+        );
+      case SessionPhase.failed:
+        return _dot(context, StatusTone.danger);
+      case SessionPhase.disconnected:
+        return _dot(context, StatusTone.neutral);
+    }
+  }
+
+  Widget _dot(BuildContext context, StatusTone tone) {
+    final color = resolveStatusColors(context, tone).dot;
+    return Semantics(
+      label: tone == StatusTone.positive ? 'Live updates on' : null,
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+      ),
+    );
+  }
 }
 
-/// Live-feed health in the app bar: a green dot while the event stream
-/// is open, a tappable red icon after it drops.
-class _FeedIndicator extends StatelessWidget {
-  const _FeedIndicator(this.feed);
+/// One-tap reconnect button shown in the app bar only when the SSE feed drops
+/// while the SSH tunnel is still up.
+class _FeedDropButton extends StatelessWidget {
+  const _FeedDropButton(this.feed);
 
   final LiveFeed feed;
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<FeedStatus>(
     valueListenable: feed.status,
-    builder: (context, status, _) => status == FeedStatus.live
-        ? const Tooltip(
-            message: 'Live updates on',
-            child: Icon(Icons.circle, size: 10, color: Colors.green),
-          )
-        : IconButton(
-            tooltip: '${feed.error ?? 'Live updates off'} - tap to reconnect',
-            icon: const Icon(Icons.sync_problem, color: Colors.red),
-            onPressed: feed.reconnect,
-          ),
+    builder: (context, status, _) {
+      if (status == FeedStatus.live) return const SizedBox.shrink();
+      final warn = resolveStatusColors(context, StatusTone.warning).dot;
+      return IconButton(
+        tooltip: '${feed.error ?? 'Live updates paused'} - tap to reconnect',
+        icon: Icon(Icons.sync_problem_rounded, color: warn),
+        onPressed: feed.reconnect,
+      );
+    },
   );
 }
 
-/// The Inbox tab icon, with a count of pending messages when connected.
-class _InboxIcon extends StatelessWidget {
-  const _InboxIcon(this.state, {required this.selected});
+/// Shell-wide strip surfacing `SessionState.error`, including M6's
+/// `"connection to <host> lost; reconnecting (n/5)"` progress.
+class _SessionStatusBanner extends StatelessWidget {
+  const _SessionStatusBanner({
+    required this.registry,
+    required this.session,
+    required this.state,
+  });
 
+  final MachineRegistry registry;
+  final SessionController session;
   final SessionState state;
-  final bool selected;
 
   @override
   Widget build(BuildContext context) {
-    final icon = Icon(selected ? Icons.inbox : Icons.inbox_outlined);
-    final client = state.client;
-    final feed = state.feed;
-    if (state.phase != SessionPhase.ready || client == null || feed == null) {
-      return icon;
+    final err = state.error;
+    final machine = state.machine;
+    if (err == null ||
+        machine == null ||
+        (state.phase != SessionPhase.connecting &&
+            state.phase != SessionPhase.failed)) {
+      return const SizedBox.shrink();
     }
-    return _InboxCount(client: client, feed: feed, child: icon);
+    final reconnecting = state.phase == SessionPhase.connecting;
+    final tone = reconnecting ? StatusTone.warning : StatusTone.danger;
+    final colors = resolveStatusColors(context, tone);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.container,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          if (reconnecting)
+            const SizedBox(width: 16, height: 16, child: M3ELoadingIndicator())
+          else
+            Icon(Icons.error_outline_rounded, size: 18, color: colors.dot),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              err,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: colors.onContainer),
+            ),
+          ),
+          TextButton(
+            onPressed: () => connectMachineWithPrompt(
+              context,
+              registry: registry,
+              session: session,
+              machine: machine,
+              forcePassword: state.needsPassword,
+            ),
+            child: Text(reconnecting ? 'Retry now' : 'Reconnect'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
-/// Keeps the pending-message count fresh: fetched once, then refetched
-/// when the feed reports a message change or comes back after a drop.
-class _InboxCount extends StatefulWidget {
-  const _InboxCount({
-    required this.client,
-    required this.feed,
-    required this.child,
+/// Actionable empty state when no session is ready yet.
+class _NotConnectedView extends StatelessWidget {
+  const _NotConnectedView({
+    required this.registry,
+    required this.session,
+    required this.state,
+    required this.onStateChanged,
   });
 
-  final TowerClient client;
-  final LiveFeed feed;
-  final Widget child;
+  final MachineRegistry registry;
+  final SessionController session;
+  final SessionState state;
+  final VoidCallback onStateChanged;
 
-  @override
-  State<_InboxCount> createState() => _InboxCountState();
-}
-
-class _InboxCountState extends State<_InboxCount> {
-  int _count = 0;
-  StreamSubscription<TowerEvent>? _sub;
-  Timer? _debounce;
-
-  @override
-  void initState() {
-    super.initState();
-    _sub = widget.feed.events.listen((e) {
-      if (e.kind.startsWith('message.')) _schedule();
-    });
-    widget.feed.status.addListener(_onStatus);
-    _refresh();
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    _debounce?.cancel();
-    widget.feed.status.removeListener(_onStatus);
-    super.dispose();
-  }
-
-  void _onStatus() {
-    if (widget.feed.status.value == FeedStatus.live) _schedule();
-  }
-
-  void _schedule() {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), _refresh);
-  }
-
-  Future<void> _refresh() async {
-    try {
-      final n = (await widget.client.inbox()).length;
-      if (mounted) setState(() => _count = n);
-    } catch (_) {
-      // The Inbox tab shows the error; the badge just keeps its last count.
+  StoredMachine? _preferredTarget(List<StoredMachine> machines) {
+    if (state.machine != null) return state.machine;
+    final activeId = registry.activeMachineId();
+    if (activeId != null) {
+      for (final m in machines) {
+        if (m.id == activeId) return m;
+      }
     }
+    return machines.firstOrNull;
   }
 
   @override
-  Widget build(BuildContext context) => Badge(
-    isLabelVisible: _count > 0,
-    label: Text('$_count'),
-    child: widget.child,
-  );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    if (state.phase == SessionPhase.connecting ||
+        state.phase == SessionPhase.connected) {
+      final hostName = state.machine?.name ?? 'host';
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const M3ELoadingIndicator(),
+              const SizedBox(height: 16),
+              Text('Connecting to $hostName…', style: textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text(
+                'Opening SSH tunnel and verifying tower API',
+                textAlign: TextAlign.center,
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final machines = registry.machines();
+    final target = _preferredTarget(machines);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: M3ECard(
+          variant: M3ECardVariant.filled,
+          color: scheme.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(24),
+          focusable: false,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: scheme.primaryContainer,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.dns_rounded,
+                  size: 28,
+                  color: scheme.onPrimaryContainer,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                target == null
+                    ? 'No tower host configured'
+                    : 'Disconnected from ${target.name}',
+                textAlign: TextAlign.center,
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                target == null
+                    ? 'Add a machine over SSH. Your password is used once to '
+                          'install this device\'s Ed25519 key.'
+                    : '${target.username}@${target.host}:${target.port}',
+                textAlign: TextAlign.center,
+                style: textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (target == null)
+                M3EButton.icon(
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  onPressed: () async {
+                    final added = await showAddMachineDialog(context, registry);
+                    if (added == null || !context.mounted) return;
+                    onStateChanged();
+                    await connectMachineWithPrompt(
+                      context,
+                      registry: registry,
+                      session: session,
+                      machine: added,
+                    );
+                  },
+                  label: const Text('Add tower host'),
+                )
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    M3EButton.icon(
+                      icon: const Icon(Icons.bolt_rounded, size: 18),
+                      onPressed: () => connectMachineWithPrompt(
+                        context,
+                        registry: registry,
+                        session: session,
+                        machine: target,
+                        forcePassword: state.needsPassword,
+                      ),
+                      label: Text('Connect ${target.name}'),
+                    ),
+                    M3EButton(
+                      style: M3EButtonStyle.tonal,
+                      onPressed: () async {
+                        await showMachinesSheet(
+                          context,
+                          registry: registry,
+                          session: session,
+                        );
+                        onStateChanged();
+                      },
+                      child: const Text('Switch host'),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
